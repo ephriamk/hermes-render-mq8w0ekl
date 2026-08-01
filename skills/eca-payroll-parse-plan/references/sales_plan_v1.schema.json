@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sales_plan_v1",
+  "description": "Payroll V4 frontend-sales comp-plan spec. Plan parameters only — house rules (EFT x10, P1/P2 mechanics, source definitions) are never duplicated here. Every pay-bearing field requires a provenance entry (verbatim quote). Vault SoT: ECAMain/payroll-v4/plan-ingestion-contract.md",
+  "type": "object",
+  "required": ["schema_version", "identity", "effective_date", "p1_mode", "p2_mode", "parameters", "commission", "provenance", "flags"],
+  "properties": {
+    "schema_version": { "const": "sales_plan_v1" },
+    "identity": {
+      "type": "object",
+      "required": ["canonical_name", "clubs"],
+      "properties": {
+        "canonical_name": { "type": "string", "minLength": 3, "description": "Resolved 'Last, First' against the employees roster — never raw PDF transcription" },
+        "clubs": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9]{5}$" },
+          "minItems": 1,
+          "description": "Every club this plan covers (leading-zero form) — ingestion fans out one spec per club"
+        },
+        "role_hint": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "effective_date": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "end_date": { "type": ["string", "null"], "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "p1_mode": { "enum": ["salary", "guarantee_floor", "draw_advance", "hourly"] },
+    "p2_mode": { "enum": ["additive", "max_trueup", "independent"] },
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "hourly_rate": { "type": ["number", "null"], "minimum": 0 },
+        "salary": { "type": ["number", "null"], "minimum": 0 },
+        "salary_period2": { "type": ["number", "null"], "minimum": 0 },
+        "guarantee_p1": { "type": ["number", "null"], "minimum": 0 },
+        "guarantee_p2": { "type": ["number", "null"], "minimum": 0 },
+        "draw": { "type": ["number", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "commission": {
+      "type": "object",
+      "required": ["eft", "pt", "nb", "service", "review"],
+      "properties": {
+        "eft": { "$ref": "#/$defs/rateOrExcluded" },
+        "pt": { "$ref": "#/$defs/rateOrExcluded" },
+        "nb": { "$ref": "#/$defs/rateOrExcluded" },
+        "service": { "$ref": "#/$defs/eventRateOrExcluded" },
+        "review": { "$ref": "#/$defs/eventRateOrExcluded" }
+      },
+      "additionalProperties": false
+    },
+    "tiers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sspts_min", "rates"],
+        "properties": {
+          "sspts_min": { "type": "number", "minimum": 0 },
+          "sspts_max": { "type": ["number", "null"] },
+          "rates": {
+            "oneOf": [
+              { "const": "base" },
+              { "type": "object", "additionalProperties": { "type": "number" } }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "bonuses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["condition", "amount"],
+        "properties": {
+          "condition": { "type": "string", "minLength": 3 },
+          "amount": { "type": "number" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "unmodeled_terms": { "type": "array", "items": { "type": "string" } },
+    "provenance": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "quote": { "type": ["string", "null"] },
+          "page": { "type": ["integer", "null"] },
+          "source": { "type": ["string", "null"] },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+        }
+      },
+      "description": "One entry per extracted pay-bearing value. No quote -> no extraction."
+    },
+    "flags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "CONFLICT | NEEDS_GRAMMAR | DRIFT | CONFIRM_IDENTITY | CONFIRM:<field>"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "rateOrExcluded": {
+      "oneOf": [
+        { "type": "number", "minimum": 0, "maximum": 1 },
+        { "const": "EXCLUDED" },
+        { "type": "null" }
+      ]
+    },
+    "eventRateOrExcluded": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["points_per_event", "rate"],
+          "properties": {
+            "points_per_event": { "type": "number", "minimum": 0 },
+            "rate": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        { "const": "EXCLUDED" },
+        { "type": "null" }
+      ]
+    }
+  }
+}

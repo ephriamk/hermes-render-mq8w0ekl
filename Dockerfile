@@ -54,11 +54,17 @@ RUN set -eu; \
 # overlays would shadow upstream entries.
 COPY --chown=hermes:hermes skills/ /opt/render-tools/skills-local/
 
+# ECA's zero-token queue watcher is image-managed but installed onto the
+# persistent disk at boot because Hermes cron resolves scripts from there.
+COPY --chown=root:root scripts/payroll_watchdog.sh /opt/render-tools/payroll_watchdog.sh
+
 # Boot-time wrapper: patches /opt/data/config.yaml, then hands off to
 # the upstream entrypoint chain (tini → docker/entrypoint.sh).
 COPY --chown=root:root scripts/bootstrap.sh /opt/render-tools/bootstrap.sh
 COPY --chown=root:root scripts/patch-config.py /opt/render-tools/patch-config.py
-RUN chmod 0755 /opt/render-tools/bootstrap.sh /opt/render-tools/patch-config.py
+RUN chmod 0755 /opt/render-tools/bootstrap.sh \
+               /opt/render-tools/patch-config.py \
+               /opt/render-tools/payroll_watchdog.sh
 
 # Pre-create the dir the patcher writes to so chown works cleanly on
 # first boot. The mounted disk replaces this empty dir at runtime;
