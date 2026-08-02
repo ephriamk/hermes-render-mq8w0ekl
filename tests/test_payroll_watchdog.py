@@ -59,7 +59,7 @@ class PayrollWatchdogTests(unittest.TestCase):
         self.assertIn("backend permits to\nclaim exactly one job", skill)
         self.assertNotIn("exact `cloud-wN` label", skill)
 
-    def test_fallback_pt_contract_contains_correction_semantics(self) -> None:
+    def test_fallback_pt_contract_contains_correction_and_identity_semantics(self) -> None:
         contract = (
             ROOT
             / "skills"
@@ -68,9 +68,11 @@ class PayrollWatchdogTests(unittest.TestCase):
             / "parse_pt_agreement_v1.md"
         ).read_text()
 
-        self.assertIn("pt-agreement-v7-corrections", contract)
+        self.assertIn("pt-agreement-v8-identity-crosscheck", contract)
         self.assertIn("Corrections are edits, not extra slots", contract)
         self.assertIn("It is not ordinals 6 and 7", contract)
+        self.assertIn("/pt-asset/{asset_id}/context", contract)
+        self.assertIn("Never transpose, reorder, or blindly copy context", contract)
 
     def test_active_gateway_request_blocks_another_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

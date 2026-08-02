@@ -159,14 +159,21 @@ no omissions:
 
 1. Download its scan from
    `GET /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/pdf?lease_token={lease_token}`.
-2. Read the whole page visually. Zoom into faint handwriting and inspect below
-   the five printed PD rows for handwritten overflow rows.
-3. Build the exact `pdn-v1` extraction described by the live contract. Record
+2. Read the whole page visually and record a draft member number before asking
+   for source context. Zoom into faint handwriting and inspect below the five
+   printed PD rows for handwritten overflow rows.
+3. Fetch
+   `GET /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/context?lease_token={lease_token}`
+   and compare `expected_member_number` to the independent draft. On mismatch,
+   tightly zoom/crop the printed field and reread it in both directions. Never
+   blindly replace a visibly different value with context; uncertainty remains
+   partial and goes to deterministic review.
+4. Build the exact `pdn-v1` extraction described by the live contract. Record
    printed values only; put inconsistencies in `warnings`, never “fix” them.
-4. Submit it to
+5. Submit it to
    `POST /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/parse` with
    `{"lease_token":"...","extraction":{...}}`.
-5. If the scan is corrupt, blank, or genuinely unreadable, submit
+6. If the scan is corrupt, blank, or genuinely unreadable, submit
    `{"lease_token":"...","error":"<specific one-line reason>"}` to the
    same endpoint. Never skip an asset silently.
 
