@@ -102,14 +102,16 @@ Body: {
     "echo"
   ],
   "lease_seconds": 1800,
-  "worker_label": "<the cloud-wN label supplied in the wake prompt>"
+  "worker_label": "<the exact label supplied in the wake prompt>"
 }
 ```
 
-`worker_label` is required for engine routing and heartbeat visibility. Copy
-the exact `cloud-wN` label from the wake prompt; never invent a different
-engine label. The longer lease is required because one PT job can contain up
-to 10 separate agreement scans.
+`worker_label` is required for engine routing, heartbeat visibility, and the
+one-claim safety boundary. Copy the exact label from the wake prompt. The
+Render watchdog supplies a unique `single-*` label that the backend permits to
+claim exactly one job; never replace it with `cloud-wN`, never claim a second
+job, and exit after completing/failing that job. The longer lease is required
+because one PT job can contain up to 10 separate agreement scans.
 
 Response shapes:
 

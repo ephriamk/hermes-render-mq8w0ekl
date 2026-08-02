@@ -52,6 +52,26 @@ def _watchdog_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
 
 
 class PayrollWatchdogTests(unittest.TestCase):
+    def test_skill_preserves_backend_enforced_single_worker_label(self) -> None:
+        skill = (ROOT / "skills" / "eca-payroll-parse-plan" / "SKILL.md").read_text()
+
+        self.assertIn("Copy the exact label from the wake prompt", skill)
+        self.assertIn("backend permits to\nclaim exactly one job", skill)
+        self.assertNotIn("exact `cloud-wN` label", skill)
+
+    def test_fallback_pt_contract_contains_correction_semantics(self) -> None:
+        contract = (
+            ROOT
+            / "skills"
+            / "eca-payroll-parse-plan"
+            / "references"
+            / "parse_pt_agreement_v1.md"
+        ).read_text()
+
+        self.assertIn("pt-agreement-v7-corrections", contract)
+        self.assertIn("Corrections are edits, not extra slots", contract)
+        self.assertIn("It is not ordinals 6 and 7", contract)
+
     def test_active_gateway_request_blocks_another_worker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
