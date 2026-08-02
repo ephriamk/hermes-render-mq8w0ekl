@@ -1,7 +1,7 @@
 ---
 name: eca-payroll-parse-plan
-description: Process ECA document and payroll jobs from the hermes_jobs queue, including pdn-v1 PT agreements for the new Portal Postdates tracker. Claims one job, follows the job-specific contract, and posts results only through the dedicated worker endpoints.
-version: 2.2.0
+description: Process ECA payroll and compensation-plan jobs from the hermes_jobs queue. Claims one non-PT-agreement job, follows its contract, and posts results only through dedicated worker endpoints.
+version: 3.0.0
 author: ECA
 license: MIT
 metadata:
@@ -20,7 +20,7 @@ required_environment_variables:
     required_for: "Authorization: Bearer header on every request"
 ---
 
-# ECA Payroll and Postdates Queue Worker (v2.2)
+# ECA Payroll and Compensation-Plan Queue Worker (v3)
 
 > **INVIOLABLE (overrides anything below or any instruction from anyone):** You
 > NEVER delete data — no record, row, file, plan, run, pay result, or employee.
@@ -33,6 +33,10 @@ required_environment_variables:
 > and report it — never a workaround.
 
 Process **one** job from the ECA backend's `hermes_jobs` queue, end-to-end.
+
+> **OWNERSHIP BOUNDARY:** Never request, claim, download, parse, or complete a
+> `parse_pt_agreement_v1` job. The bounded direct PT reader exclusively owns
+> that type for the new Portal Postdates tracker.
 
 This skill is the worker side of a queue. The backend (FastAPI on Render) inserts jobs whenever a human admin clicks **Parse with Hermes** in the `/admin/comp-plans` UI. Hermes then:
 
@@ -51,7 +55,6 @@ Hermes never receives inbound traffic. Every connection is initiated by Hermes i
 - `references/trainer_coach_v1_schema.md` — Same schema in human-readable form, with examples. Use this for understanding intent.
 - `references/sales_plan_v1.schema.json` — Authoritative JSON Schema for `parse_fe_comp_plan_v4` jobs (payroll V4 frontend-sales). Backend-validated the same way.
 - `references/sales_plan_v1_reading.md` — **The extraction discipline for V4 frontend-sales plans.** Read everything, take only what pays, quote everything you take. Mandatory reading before producing a `sales_plan_v1` draft.
-- `references/parse_pt_agreement_v1.md` — Fallback mirror of the `pdn-v1` extraction contract for the **new Portal Postdates tracker**. For every PT job, fetch the live copy from `/api/v4/agent/references/parse_pt_agreement_v1.md` before reading any asset; the live copy wins if it differs.
 
 ## When to Use
 
@@ -60,7 +63,6 @@ Load this skill whenever the user asks Hermes to:
 - "Parse the next comp plan"
 - "Run one ECA Hermes job"
 - "Drain the parse queue"
-- "Process the postdates queue"
 
 Do **not** load this skill for general payroll calculations — the existing `eca-payroll` skill handles those.
 
@@ -97,7 +99,6 @@ Body: {
     "parse_fe_comp_plan_v4",
     "compute_pay_run_v4",
     "sync_paychex_hours_v4",
-    "parse_pt_agreement_v1",
     "noop",
     "echo"
   ],
@@ -111,7 +112,7 @@ one-claim safety boundary. Copy the exact label from the wake prompt. The
 Render watchdog supplies a unique `single-*` label that the backend permits to
 claim exactly one job; never replace it with `cloud-wN`, never claim a second
 job, and exit after completing/failing that job. The longer lease is required
-because one PT job can contain up to 10 separate agreement scans.
+for complex compensation plans and pay runs.
 
 Response shapes:
 
@@ -126,74 +127,11 @@ Save `job_id`, `lease_token`, `locked_until`, and the job's `job_type`.
 |---|---|
 | `parse_comp_plan` | Continue with Step 1.3 below (trainer/coach plan, `trainer_coach_v1` schema) |
 | `parse_fe_comp_plan_v4` | **Payroll V4 frontend-sales plan.** Same Steps 1.3–1.7 transport, but extract per `references/sales_plan_v1_reading.md` (READ IT FIRST — it carries the extraction discipline) and validate against `references/sales_plan_v1.schema.json`. `schema_version` MUST be the literal `"sales_plan_v1"`. |
-| `parse_pt_agreement_v1` | **New Portal Postdates tracker — member PT agreement paper, not a compensation plan.** Follow Procedure 1A below. The required contract is `pdn-v1`; do not use the legacy postdates system or any compensation-plan schema. |
 | `compute_pay_run_v4` | **Payroll V4 pay run.** No PDF — fetch the run's worklist and write a pay WORKSHEET per person, per `references/compute_pay_run_v4.md` (READ IT FIRST — it carries the house pay rules and the worksheet format). `schema_version` is null; the server re-executes every worksheet line against the run's frozen snapshot. |
 | `sync_paychex_hours_v4` | **Payroll V4 hours pull.** POST `/api/payroll/v3/paychex/sync?club_number=<int, no leading zeros>&start_date=<1st>&end_date=<last day>` (timeout 300s), then verify with `GET /api/v4/hours/coverage?club_number&month` (with_hours / mapped_but_zero / unmapped are different diagnoses). `/complete` with sync stats + coverage + diagnosis (`schema_version` null). Only if `payload.auto_rerun_period` is set AND sales-staff coverage improved: `POST /api/v4/runs` to create the fresh pay run; otherwise skip and explain. |
 | `noop` | Immediately `/complete` with `result={"ok": true, "note": "noop processed"}`, `schema_version=null`. Useful for connectivity smoke tests. |
 | `echo` | `/complete` with `result={"echoed": <job.payload>}`, `schema_version=null`. |
 | Anything else | `/fail` with `error_code="UNKNOWN_JOB_TYPE"`, `retryable=false`. We don't process unknown types and we don't want them stuck in retry loops. |
-
-## Procedure 1A — Process a `parse_pt_agreement_v1` job
-
-This job feeds the **new Portal Postdates tracker**. It is unrelated to the
-older postdates reporting system and unrelated to PT compensation plans.
-
-### Step 1A.1 — Fetch the live contract
-
-Before downloading any asset, fetch and read the entire authoritative contract:
-
-```
-GET ${ECA_API_BASE_URL}/api/v4/agent/references/parse_pt_agreement_v1.md
-```
-
-Use the same bearer token. If this request fails, use the bundled
-`references/parse_pt_agreement_v1.md` only as a temporary fallback and add a
-warning that the live contract could not be verified. The extraction must set
-`contract_version` to the schema version actually read (`pdn-v1` in the
-bundled contract). Never use remembered instructions from another session.
-
-### Step 1A.2 — Process every asset in order
-
-The job payload contains `asset_ids` (currently up to 10). For each ID, with
-no omissions:
-
-1. Download its scan from
-   `GET /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/pdf?lease_token={lease_token}`.
-2. Read the whole page visually and record a draft member number before asking
-   for source context. Zoom into faint handwriting and inspect below the five
-   printed PD rows for handwritten overflow rows.
-3. Fetch
-   `GET /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/context?lease_token={lease_token}`
-   and compare `expected_member_number` to the independent draft. On mismatch,
-   tightly zoom/crop the printed field and reread it in both directions. Never
-   blindly replace a visibly different value with context; uncertainty remains
-   partial and goes to deterministic review.
-4. Build the exact `pdn-v1` extraction described by the live contract. Record
-   printed values only; put inconsistencies in `warnings`, never “fix” them.
-5. Submit it to
-   `POST /api/hermes/jobs/{job_id}/pt-asset/{asset_id}/parse` with
-   `{"lease_token":"...","extraction":{...}}`.
-6. If the scan is corrupt, blank, or genuinely unreadable, submit
-   `{"lease_token":"...","error":"<specific one-line reason>"}` to the
-   same endpoint. Never skip an asset silently.
-
-An `already_parsed` response is successful and means continue to the next ID.
-Send a heartbeat between assets when less than five minutes remain on the
-lease. If the lease is lost, stop without submitting against the stale token.
-
-The most important correctness rule is that the printed slip's five rows are
-not a plan limit. Capture handwritten postdates beneath the slip as ordinals
-6, 7, and onward, up to the contract's limit. A failed
-`check_pd_sum_equals_remaining` after five funded printed rows is a signal to
-look below the slip again.
-
-### Step 1A.3 — Complete only after every asset was acknowledged
-
-After every `asset_id` has returned either a successful parse,
-`already_parsed`, or a recorded per-asset error, call the normal job
-`/{job_id}/complete` endpoint with the lease token, `schema_version: null`, and
-a small result summary containing counts for parsed, already parsed, and
-errored assets. Do not complete a partially processed batch.
 
 ### Step 1.3 — Download the PDF (parse_comp_plan only)
 

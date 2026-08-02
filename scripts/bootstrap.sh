@@ -21,8 +21,10 @@ set -eu
 DATA_DIR="${HERMES_HOME:-/opt/data}"
 PATCHER="/opt/render-tools/patch-config.py"
 WATCHDOG_SOURCE="/opt/render-tools/payroll_watchdog.sh"
+PT_WORKER_SOURCE="/opt/render-tools/pt_agreement_worker.py"
 WATCHDOG_DIR="${DATA_DIR}/scripts"
 WATCHDOG_TARGET="${WATCHDOG_DIR}/payroll_watchdog.sh"
+PT_WORKER_TARGET="${WATCHDOG_DIR}/pt_agreement_worker.py"
 ECA_SKILL_SOURCE="/opt/render-tools/skills-local/eca-payroll-parse-plan"
 
 # Make sure the data dir exists and the hermes user can write to it
@@ -51,6 +53,13 @@ if [ -f "${WATCHDOG_SOURCE}" ]; then
   install -o hermes -g hermes -m 0755 "${WATCHDOG_SOURCE}" "${WATCHDOG_TARGET}"
 else
   echo "[render-tools] warning: ${WATCHDOG_SOURCE} not found; keeping existing watchdog" >&2
+fi
+
+if [ -f "${PT_WORKER_SOURCE}" ]; then
+  install -d -o hermes -g hermes -m 0755 "${WATCHDOG_DIR}"
+  install -o hermes -g hermes -m 0755 "${PT_WORKER_SOURCE}" "${PT_WORKER_TARGET}"
+else
+  echo "[render-tools] warning: ${PT_WORKER_SOURCE} not found; direct PT reader unavailable" >&2
 fi
 
 # The existing deployment has persistent skill copies under both the global

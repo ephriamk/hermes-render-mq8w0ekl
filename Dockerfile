@@ -28,6 +28,12 @@ RUN chown -R hermes:hermes /opt/hermes/ui-tui /opt/hermes/node_modules \
           /opt/hermes/ui-tui/dist/entry.js \
  && chown -R hermes:hermes /opt/hermes/ui-tui
 
+# Fail the image build—not a live job—if the small deterministic reader's
+# runtime dependencies ever disappear from the upstream Hermes image.
+RUN command -v pdftoppm >/dev/null \
+ && command -v flock >/dev/null \
+ && python3 -c "from PIL import Image"
+
 # Pull the official Render skill bundle from github.com/render-oss/skills
 # at a pinned commit. Mounted via skills.external_dirs at boot, so the
 # upstream Hermes skills-sync flow never touches these files. To upgrade,
@@ -57,6 +63,7 @@ COPY --chown=hermes:hermes skills/ /opt/render-tools/skills-local/
 # ECA's zero-token queue watcher is image-managed but installed onto the
 # persistent disk at boot because Hermes cron resolves scripts from there.
 COPY --chown=root:root scripts/payroll_watchdog.sh /opt/render-tools/payroll_watchdog.sh
+COPY --chown=root:root scripts/pt_agreement_worker.py /opt/render-tools/pt_agreement_worker.py
 
 # Boot-time wrapper: patches /opt/data/config.yaml, then hands off to
 # the upstream entrypoint chain (tini → docker/entrypoint.sh).
@@ -64,7 +71,8 @@ COPY --chown=root:root scripts/bootstrap.sh /opt/render-tools/bootstrap.sh
 COPY --chown=root:root scripts/patch-config.py /opt/render-tools/patch-config.py
 RUN chmod 0755 /opt/render-tools/bootstrap.sh \
                /opt/render-tools/patch-config.py \
-               /opt/render-tools/payroll_watchdog.sh
+               /opt/render-tools/payroll_watchdog.sh \
+               /opt/render-tools/pt_agreement_worker.py
 
 # Pre-create the dir the patcher writes to so chown works cleanly on
 # first boot. The mounted disk replaces this empty dir at runtime;

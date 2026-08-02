@@ -1,9 +1,7 @@
 import json
 import os
-import re
 import subprocess
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -18,7 +16,6 @@ def _watchdog_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
         "ECA_API_BASE_URL=https://backend.invalid\n"
         "API_SERVER_KEY=test-key\n"
         "API_SERVER_PORT=8788\n"
-        "ECA_MAX_PAYROLL_WORKERS=1\n"
         "ECA_HERMES_SERVICE_TOKEN=test-token\n"
     )
     marker = tmp_path / "agent-launched"
@@ -28,88 +25,115 @@ def _watchdog_env(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
     fake_curl.write_text(
         "#!/bin/sh\n"
         "case \"$*\" in\n"
-        "  */api/v4/agent/status*) printf '{\"queue\":{\"queued\":5}}' ;;\n"
+        "  */api/v4/agent/status*) printf '%s' \"$ECA_WATCHDOG_TEST_STATUS\" ;;\n"
         "  *) printf 'launched\\n' >> \"$ECA_WATCHDOG_TEST_MARKER\" ;;\n"
         "esac\n"
     )
     fake_curl.chmod(0o755)
+    fake_flock = fake_bin / "flock"
+    fake_flock.write_text(
+        "#!/bin/sh\n"
+        "[ \"${ECA_WATCHDOG_TEST_LOCKED:-0}\" = 1 ] && exit 1\n"
+        "exit 0\n"
+    )
+    fake_flock.chmod(0o755)
 
-    pid_dir = tmp_path / "pids"
+    pt_worker = tmp_path / "pt-worker"
+    pt_worker.write_text(
+        "#!/bin/sh\n"
+        "[ -z \"${ECA_PT_TEST_OUTPUT:-}\" ] || printf '%s\\n' \"$ECA_PT_TEST_OUTPUT\"\n"
+        "exit \"${ECA_PT_TEST_RC:-0}\"\n"
+    )
+    pt_worker.chmod(0o755)
     wake_dir = tmp_path / "wakes"
     wake_dir.mkdir()
+    run_lock = tmp_path / "watchdog.running"
     env = os.environ.copy()
     env.update(
         {
             "PATH": f"{fake_bin}:{env['PATH']}",
             "ECA_WATCHDOG_ENV_FILE": str(env_file),
-            "ECA_WATCHDOG_PID_DIR": str(pid_dir),
             "ECA_WATCHDOG_WAKE_DIR": str(wake_dir),
-            "ECA_WATCHDOG_LOCK_FILE": str(tmp_path / "watchdog.lock"),
+            "ECA_WATCHDOG_RUN_LOCK": str(run_lock),
+            "ECA_PT_WORKER_PATH": str(pt_worker),
             "ECA_WATCHDOG_TEST_MARKER": str(marker),
+            "ECA_WATCHDOG_TEST_STATUS": (
+                '{"queue":{"agent_queued":0,"agent_claimed":0}}'
+            ),
         }
     )
-    return env, marker, pid_dir
+    return env, marker, run_lock
 
 
 class PayrollWatchdogTests(unittest.TestCase):
-    def test_skill_preserves_backend_enforced_single_worker_label(self) -> None:
+    def test_agent_skill_excludes_pt_agreement_jobs(self) -> None:
         skill = (ROOT / "skills" / "eca-payroll-parse-plan" / "SKILL.md").read_text()
+        claim_block = skill.split("### Step 1.1 — Claim a job", 1)[1].split(
+            "Response shapes:", 1
+        )[0]
+        self.assertNotIn('"parse_pt_agreement_v1"', claim_block)
+        self.assertIn("direct PT reader exclusively owns", skill)
 
-        self.assertIn("Copy the exact label from the wake prompt", skill)
-        self.assertIn("backend permits to\nclaim exactly one job", skill)
-        self.assertNotIn("exact `cloud-wN` label", skill)
-
-    def test_fallback_pt_contract_contains_correction_and_identity_semantics(self) -> None:
-        contract = (
-            ROOT
-            / "skills"
-            / "eca-payroll-parse-plan"
-            / "references"
-            / "parse_pt_agreement_v1.md"
-        ).read_text()
-
-        self.assertIn("pt-agreement-v8-identity-crosscheck", contract)
-        self.assertIn("Corrections are edits, not extra slots", contract)
-        self.assertIn("It is not ordinals 6 and 7", contract)
-        self.assertIn("/pt-asset/{asset_id}/context", contract)
-        self.assertIn("Never transpose, reorder, or blindly copy context", contract)
-
-    def test_active_gateway_request_blocks_another_worker(self) -> None:
+    def test_direct_reader_result_is_logged_with_no_general_queue(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            env, marker, pid_dir = _watchdog_env(tmp_path)
-            pid_dir.mkdir()
-            active = subprocess.Popen(
-                [
-                    "python3",
-                    "-c",
-                    "import time; time.sleep(20)",
-                    "http://127.0.0.1:8788/v1/chat/completions",
-                ]
+            env, marker, _ = _watchdog_env(Path(tmp))
+            env.update(ECA_PT_TEST_RC="10", ECA_PT_TEST_OUTPUT='{"event":"job_completed"}')
+            result = subprocess.run(
+                ["bash", str(WATCHDOG)], env=env, capture_output=True, text=True, check=True
             )
-            try:
-                (pid_dir / "active.pid").write_text(str(active.pid))
-                result = subprocess.run(
-                    ["bash", str(WATCHDOG)],
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                self.assertEqual(result.stdout, "")
-                self.assertFalse(marker.exists())
-            finally:
-                active.terminate()
-                active.wait(timeout=5)
+            self.assertIn("job_completed", result.stdout)
+            self.assertFalse(marker.exists())
 
-    def test_stale_pid_is_removed_and_one_worker_starts(self) -> None:
+    def test_pt_and_general_work_run_sequentially_in_one_tick(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, marker, _ = _watchdog_env(Path(tmp))
+            env.update(
+                ECA_PT_TEST_RC="10",
+                ECA_PT_TEST_OUTPUT='{"event":"job_completed"}',
+                ECA_WATCHDOG_TEST_STATUS=(
+                    '{"queue":{"agent_queued":1,"agent_claimed":0}}'
+                ),
+            )
+            result = subprocess.run(
+                ["bash", str(WATCHDOG)], env=env, capture_output=True, text=True, check=True
+            )
+            self.assertIn("job_completed", result.stdout)
+            self.assertIn("1 general job(s) queued", result.stdout)
+            self.assertEqual(marker.read_text(), "launched\n")
+
+    def test_empty_pt_queue_runs_one_general_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            env, marker, pid_dir = _watchdog_env(tmp_path)
-            pid_dir.mkdir()
-            stale = pid_dir / "stale.pid"
-            stale.write_text("99999999")
+            env, marker, _ = _watchdog_env(tmp_path)
+            env["ECA_WATCHDOG_TEST_STATUS"] = (
+                '{"queue":{"queued":8,"claimed":2,"agent_queued":3,"agent_claimed":0}}'
+            )
+            result = subprocess.run(
+                ["bash", str(WATCHDOG)], env=env, capture_output=True, text=True, check=True
+            )
+            self.assertIn("3 general job(s) queued", result.stdout)
+            self.assertEqual(marker.read_text(), "launched\n")
+            wake_files = list((tmp_path / "wakes").glob("payroll_wake_*.json"))
+            self.assertEqual(len(wake_files), 1)
+            prompt = json.loads(wake_files[0].read_text())["messages"][0]["content"]
+            self.assertIn("Never request or process parse_pt_agreement_v1", prompt)
+            self.assertIn("Never claim a second job", prompt)
 
+    def test_existing_general_claim_blocks_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, marker, _ = _watchdog_env(Path(tmp))
+            env["ECA_WATCHDOG_TEST_STATUS"] = (
+                '{"queue":{"agent_queued":3,"agent_claimed":1}}'
+            )
+            subprocess.run(
+                ["bash", str(WATCHDOG)], env=env, capture_output=True, text=True, check=True
+            )
+            self.assertFalse(marker.exists())
+
+    def test_atomic_run_lock_blocks_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, marker, run_lock = _watchdog_env(Path(tmp))
+            env["ECA_WATCHDOG_TEST_LOCKED"] = "1"
             result = subprocess.run(
                 ["bash", str(WATCHDOG)],
                 env=env,
@@ -117,26 +141,8 @@ class PayrollWatchdogTests(unittest.TestCase):
                 text=True,
                 check=True,
             )
-            for _ in range(20):
-                if marker.exists():
-                    break
-                time.sleep(0.05)
-
-            self.assertIn("woke 1 agent(s)", result.stdout)
-            self.assertTrue(marker.exists())
-            self.assertFalse(stale.exists())
-            self.assertEqual(len(list(pid_dir.glob("eca-payroll-*.pid"))), 1)
-
-            wake_files = list((tmp_path / "wakes").glob("payroll_wake_*.json"))
-            self.assertEqual(len(wake_files), 1)
-            prompt = json.loads(wake_files[0].read_text())["messages"][0]["content"]
-            self.assertIn("Process exactly ONE ECA worker job", prompt)
-            self.assertIn("Never claim a second job", prompt)
-            self.assertIn("backend-enforced", prompt)
-            self.assertRegex(
-                prompt,
-                re.compile(r'"worker_label": "single-\d{14}-w1"'),
-            )
+            self.assertEqual(result.stdout, "")
+            self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":
