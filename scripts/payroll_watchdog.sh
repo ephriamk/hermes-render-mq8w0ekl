@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Zero-token ECA queue watchdog (cron --no-agent). v3: postdates-aware.
-# Every tick: one cheap HTTP check of the backend queue. Wake one Hermes agent
-# only when work exists. The Render service has 2 GB RAM, so the safe default
-# is deliberately one worker; ECA_MAX_PAYROLL_WORKERS can opt into more later.
-# Each wake gets a distinct session and worker_label. Empty stdout = silent.
+# Every tick: one cheap HTTP check of the backend queue. Wake Hermes only when
+# work exists. Each fresh session is permitted to claim exactly one backend job;
+# this bounds context growth and prevents one job's memory contaminating another.
+# The Render service has 2 GB RAM, so the safe default is deliberately one
+# worker; ECA_MAX_PAYROLL_WORKERS can opt into more later. Empty stdout = silent.
 set -u
 ENVF=${ECA_WATCHDOG_ENV_FILE:-/opt/data/.env}
 PIDDIR=${ECA_WATCHDOG_PID_DIR:-/tmp/payroll_watchdog.pids}
@@ -59,9 +60,11 @@ for i in $(seq 1 "$WANT"); do
   # conversation memory across wake rounds — an agent that just computed FE runs
   # answered a PT job from memory in 1s and posted FE worksheets on a trainer
   # run ($0 instead of $20,433; caught by evaluator flags, 07-04 test 3). Fresh
-  # key every wake = no cross-round contamination.
+  # key every wake = no cross-round contamination. The matching single-* label
+  # is also enforced server-side as one claim for this unique session, so the
+  # safety boundary does not depend on the model following this prompt.
   cat > "$WAKE_DIR/payroll_wake_$i.json" <<JSON
-{"model":"hermes-agent","messages":[{"role":"user","content":"Process the ECA worker queue now. Load and follow the eca-payroll-parse-plan skill. Claim jobs one at a time from the backend hermes_jobs queue — include \"worker_label\": \"cloud-w$i\" in every claim request body. The queue includes parse_pt_agreement_v1 jobs for the NEW Portal Postdates tracker: fetch the live pdn-v1 contract before reading them, process every asset_id, include handwritten postdate rows beyond the five printed rows, and never mix this with the legacy postdates system or PT comp plans. Process each job end-to-end, complete or fail only through the documented endpoints, and stop when the eligible queue is empty."}]}
+{"model":"hermes-agent","messages":[{"role":"user","content":"Process exactly ONE ECA worker job, then exit. Load and follow the eca-payroll-parse-plan skill. Make one claim request with \"worker_label\": \"single-$STAMP-w$i\". This label is backend-enforced as one claim for this session. Never claim a second job, even when more work is queued. The queue includes parse_pt_agreement_v1 jobs for the NEW Portal Postdates tracker: fetch the live pdn-v1 contract before reading them, process every asset_id in the claimed job, include handwritten postdate rows beyond the five printed rows, and never mix this with the legacy postdates system or PT comp plans. Complete, fail, or release the one job only through its documented endpoint, then stop so the next job receives a fresh session."}]}
 JSON
   nohup curl -s --max-time 1800 -X POST "http://127.0.0.1:$PORT/v1/chat/completions" \
     -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \

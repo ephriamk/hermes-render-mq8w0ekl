@@ -1,4 +1,6 @@
+import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -102,6 +104,17 @@ class PayrollWatchdogTests(unittest.TestCase):
             self.assertTrue(marker.exists())
             self.assertFalse(stale.exists())
             self.assertEqual(len(list(pid_dir.glob("eca-payroll-*.pid"))), 1)
+
+            wake_files = list((tmp_path / "wakes").glob("payroll_wake_*.json"))
+            self.assertEqual(len(wake_files), 1)
+            prompt = json.loads(wake_files[0].read_text())["messages"][0]["content"]
+            self.assertIn("Process exactly ONE ECA worker job", prompt)
+            self.assertIn("Never claim a second job", prompt)
+            self.assertIn("backend-enforced", prompt)
+            self.assertRegex(
+                prompt,
+                re.compile(r'"worker_label": "single-\d{14}-w1"'),
+            )
 
 
 if __name__ == "__main__":
