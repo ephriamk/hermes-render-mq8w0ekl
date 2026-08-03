@@ -128,6 +128,38 @@ class AgreementWorkerTests(unittest.TestCase):
             captured["extra_body"], {"reasoning": {"effort": "high"}}
         )
 
+    def test_parse_submission_reports_actual_reader_provenance(self):
+        client = worker.BackendClient("https://backend.example", "token")
+        captured = {}
+
+        def fake_request(method, path, **kwargs):
+            captured.update(method=method, path=path, **kwargs)
+            return {"result": "parsed"}
+
+        client.request = fake_request
+        result = client.submit_parse(
+            7,
+            11,
+            "lease-token",
+            {"status": "ok"},
+            provider="openai-codex",
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+        )
+
+        self.assertEqual(result, {"result": "parsed"})
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(
+            captured["body"],
+            {
+                "lease_token": "lease-token",
+                "extraction": {"status": "ok"},
+                "provider": "openai-codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+            },
+        )
+
     def test_matching_reads_produce_payment_plan(self):
         primary = _primary()
         result = worker._finalize_extraction(primary, _verifier(primary), "1234567")

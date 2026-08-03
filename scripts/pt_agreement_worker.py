@@ -287,12 +287,26 @@ class BackendClient:
         )
 
     def submit_parse(
-        self, job_id: int, asset_id: int, lease_token: str, extraction: dict
+        self,
+        job_id: int,
+        asset_id: int,
+        lease_token: str,
+        extraction: dict,
+        *,
+        provider: str,
+        model: str,
+        reasoning_effort: str,
     ) -> dict:
         return self.request(
             "POST",
             f"/api/hermes/jobs/{job_id}/pt-asset/{asset_id}/parse",
-            body={"lease_token": lease_token, "extraction": extraction},
+            body={
+                "lease_token": lease_token,
+                "extraction": extraction,
+                "provider": provider,
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+            },
             timeout=45,
         )
 
@@ -960,7 +974,15 @@ def _process_asset(
     extraction = _finalize_extraction(
         primary, verifier, context.get("expected_member_number")
     )
-    response = client.submit_parse(job_id, asset_id, lease_token, extraction)
+    response = client.submit_parse(
+        job_id,
+        asset_id,
+        lease_token,
+        extraction,
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
+    )
     _json_log(
         "asset_processed",
         job_id=job_id,
