@@ -36,6 +36,7 @@ RUN chown -R hermes:hermes /opt/hermes/ui-tui /opt/hermes/node_modules \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends poppler-utils util-linux \
  && rm -rf /var/lib/apt/lists/* \
+ && uv pip install --no-cache-dir --python /opt/hermes/.venv/bin/python "pillow==11.3.0" \
  && command -v pdftoppm >/dev/null \
  && command -v flock >/dev/null \
  && /opt/hermes/.venv/bin/python -c "from PIL import Image"
