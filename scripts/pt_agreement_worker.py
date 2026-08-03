@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/hermes/.venv/bin/python
 """Bounded PT-agreement reader for the new Portal Postdates tracker.
 
 One invocation claims at most one ``parse_pt_agreement_v1`` job. Each PDF is

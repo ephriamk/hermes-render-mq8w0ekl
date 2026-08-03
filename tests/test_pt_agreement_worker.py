@@ -75,6 +75,10 @@ def _verifier(primary):
 
 
 class AgreementWorkerTests(unittest.TestCase):
+    def test_worker_pins_the_hermes_python_runtime(self):
+        first_line = MODULE_PATH.read_text(encoding="utf-8").splitlines()[0]
+        self.assertEqual(first_line, "#!/opt/hermes/.venv/bin/python")
+
     def test_reader_defaults_to_gpt_5_6_sol_high(self):
         self.assertEqual(worker.DEFAULT_PROVIDER, "openai-codex")
         self.assertEqual(worker.DEFAULT_MODEL, "gpt-5.6-sol")
