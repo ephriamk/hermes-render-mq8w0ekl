@@ -70,6 +70,7 @@ COPY --chown=hermes:hermes skills/ /opt/render-tools/skills-local/
 # ECA's zero-token queue watcher is image-managed but installed onto the
 # persistent disk at boot because Hermes cron resolves scripts from there.
 COPY --chown=root:root scripts/payroll_watchdog.sh /opt/render-tools/payroll_watchdog.sh
+COPY --chown=root:root scripts/postdates_watchdog.sh /opt/render-tools/postdates_watchdog.sh
 COPY --chown=root:root scripts/pt_agreement_worker.py /opt/render-tools/pt_agreement_worker.py
 
 # Boot-time wrapper: patches /opt/data/config.yaml, then hands off to
@@ -79,6 +80,7 @@ COPY --chown=root:root scripts/patch-config.py /opt/render-tools/patch-config.py
 RUN chmod 0755 /opt/render-tools/bootstrap.sh \
                /opt/render-tools/patch-config.py \
                /opt/render-tools/payroll_watchdog.sh \
+               /opt/render-tools/postdates_watchdog.sh \
                /opt/render-tools/pt_agreement_worker.py
 
 # Pre-create the dir the patcher writes to so chown works cleanly on

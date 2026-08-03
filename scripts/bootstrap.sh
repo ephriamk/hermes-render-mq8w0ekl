@@ -21,9 +21,11 @@ set -eu
 DATA_DIR="${HERMES_HOME:-/opt/data}"
 PATCHER="/opt/render-tools/patch-config.py"
 WATCHDOG_SOURCE="/opt/render-tools/payroll_watchdog.sh"
+POSTDATES_WATCHDOG_SOURCE="/opt/render-tools/postdates_watchdog.sh"
 PT_WORKER_SOURCE="/opt/render-tools/pt_agreement_worker.py"
 WATCHDOG_DIR="${DATA_DIR}/scripts"
 WATCHDOG_TARGET="${WATCHDOG_DIR}/payroll_watchdog.sh"
+POSTDATES_WATCHDOG_TARGET="${WATCHDOG_DIR}/postdates_watchdog.sh"
 PT_WORKER_TARGET="${WATCHDOG_DIR}/pt_agreement_worker.py"
 ECA_SKILL_SOURCE="/opt/render-tools/skills-local/eca-payroll-parse-plan"
 
@@ -60,6 +62,14 @@ if [ -f "${PT_WORKER_SOURCE}" ]; then
   install -o hermes -g hermes -m 0755 "${PT_WORKER_SOURCE}" "${PT_WORKER_TARGET}"
 else
   echo "[render-tools] warning: ${PT_WORKER_SOURCE} not found; direct PT reader unavailable" >&2
+fi
+
+if [ -f "${POSTDATES_WATCHDOG_SOURCE}" ]; then
+  install -d -o hermes -g hermes -m 0755 "${WATCHDOG_DIR}"
+  install -o hermes -g hermes -m 0755 \
+    "${POSTDATES_WATCHDOG_SOURCE}" "${POSTDATES_WATCHDOG_TARGET}"
+else
+  echo "[render-tools] warning: ${POSTDATES_WATCHDOG_SOURCE} not found; dedicated postdates cron unavailable" >&2
 fi
 
 # The existing deployment has persistent skill copies under both the global
