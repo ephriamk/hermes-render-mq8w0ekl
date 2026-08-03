@@ -28,11 +28,17 @@ RUN chown -R hermes:hermes /opt/hermes/ui-tui /opt/hermes/node_modules \
           /opt/hermes/ui-tui/dist/entry.js \
  && chown -R hermes:hermes /opt/hermes/ui-tui
 
-# Fail the image build—not a live job—if the small deterministic reader's
-# runtime dependencies ever disappear from the upstream Hermes image.
-RUN command -v pdftoppm >/dev/null \
+# The upstream Hermes image intentionally omits these small OS utilities.
+# Install only what the deterministic reader/watchdog needs, then fail the
+# image build—not a live job—if any dependency is unavailable.  Use Hermes'
+# virtualenv for the Pillow check; the system Python does not contain Hermes'
+# application dependencies during a Docker build.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends poppler-utils util-linux \
+ && rm -rf /var/lib/apt/lists/* \
+ && command -v pdftoppm >/dev/null \
  && command -v flock >/dev/null \
- && python3 -c "from PIL import Image"
+ && /opt/hermes/.venv/bin/python -c "from PIL import Image"
 
 # Pull the official Render skill bundle from github.com/render-oss/skills
 # at a pinned commit. Mounted via skills.external_dirs at boot, so the
