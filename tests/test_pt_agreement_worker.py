@@ -262,6 +262,38 @@ class AgreementWorkerTests(unittest.TestCase):
         result = worker._finalize_extraction(primary, _verifier(primary), "1234567")
         self.assertEqual(result["plan_type"], "paid_in_full")
 
+    def test_pif_accepts_explicit_empty_verifier_rows_with_omitted_metadata(self):
+        blank_slots = [
+            {"ordinal": ordinal, "amount_value": None, "date_iso": None}
+            for ordinal in range(1, 6)
+        ]
+        primary = _primary(
+            total_paid_today=599.5,
+            remaining_balance=0,
+            pd_slots=[{**slot, "state": "blank"} for slot in blank_slots],
+        )
+        verifier = _verifier(primary)
+        verifier["pd_slots"] = blank_slots
+        verifier.pop("overflow_rows_seen")
+        verifier["warnings"] = ["No funded postdate schedule is visible."]
+
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["plan_type"], "paid_in_full")
+
+    def test_funded_schedule_still_requires_explicit_overflow_decision(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier.pop("overflow_rows_seen")
+
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(
+            any("omitted the overflow-row decision" in w for w in result["warnings"])
+        )
+
     def test_omitted_printed_row_forces_review(self):
         primary = _primary(pd_slots=_slots()[:4])
         result = worker._finalize_extraction(primary, _verifier(primary), "1234567")

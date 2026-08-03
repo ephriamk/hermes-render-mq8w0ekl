@@ -137,8 +137,10 @@ Return these keys only: member_number, agreement_date, form_type,
 is_pt_agreement, pd_slots, overflow_rows_seen, corrections_seen,
 uncertain_fields, warnings. Transcribe independently from the images. pd_slots
 uses ordinal, state, amount_value, date_iso, and note. Include rows 1-5 plus any
-real overflow rows. form_type is New PT, Renew PT, or unknown. Dates are ISO or
-null. Do not provide prose outside the JSON object.
+real overflow rows. Every row MUST include state, even when it is blank.
+overflow_rows_seen MUST be the JSON boolean false when no overflow installment
+is visible; never omit it. form_type is New PT, Renew PT, or unknown. Dates are
+ISO or null. Do not provide prose outside the JSON object.
 """
 
 
@@ -772,17 +774,43 @@ def _operational_slot_fingerprint(slots: Any) -> list[tuple[int, str, str]]:
     return sorted(fingerprint)
 
 
-def _has_critical_uncertainty(items: Any) -> bool:
+def _has_critical_uncertainty(
+    items: Any, *, require_uncertainty_language: bool = False
+) -> bool:
+    uncertainty_terms = (
+        "uncertain",
+        "unclear",
+        "illegible",
+        "faint",
+        "ambiguous",
+        "cannot",
+        "can't",
+        "unable",
+        "may be",
+        "might be",
+        "possibly",
+        "unsure",
+        "hard to read",
+        "not confident",
+    )
     for item in _string_list(items):
         normalized = " ".join(
             item.lower().replace("_", " ").replace("[", " ").replace("]", " ").split()
         )
-        if any(term in normalized for term in CRITICAL_UNCERTAINTY_TERMS):
+        has_critical_field = any(
+            term in normalized for term in CRITICAL_UNCERTAINTY_TERMS
+        )
+        has_uncertainty_language = any(
+            term in normalized for term in uncertainty_terms
+        )
+        if has_critical_field and (
+            not require_uncertainty_language or has_uncertainty_language
+        ):
             return True
     return False
 
 
-def _verifier_schedule_errors(verifier: dict) -> list[str]:
+def _verifier_schedule_errors(verifier: dict, *, primary_has_funded: bool) -> list[str]:
     """Require explicit negative evidence before accepting an empty schedule."""
     slots = verifier.get("pd_slots")
     if not isinstance(slots, list):
@@ -807,7 +835,15 @@ def _verifier_schedule_errors(verifier: dict) -> list[str]:
         if raw.get("date_iso") not in (None, "") and date_iso is None:
             errors.append("independent verifier returned a malformed postdate date")
         if state not in {"filled", "zero", "blank"}:
-            errors.append("independent verifier omitted a valid postdate row state")
+            # GPT occasionally returns the five printed rows with null amount
+            # and date but omits the redundant word "blank".  That is still
+            # explicit negative evidence: the row exists and contains no
+            # operational value.  Never infer a state when either value is
+            # present, because that could hide a funded installment.
+            if amount is None and date_iso is None:
+                state = "blank"
+            else:
+                errors.append("independent verifier omitted a valid postdate row state")
         elif state == "filled" and not (amount is not None and amount > 0 and date_iso):
             errors.append("independent verifier returned an incomplete funded postdate")
         elif state == "zero" and not (amount == 0 and not date_iso):
@@ -834,7 +870,17 @@ def _verifier_schedule_errors(verifier: dict) -> list[str]:
         for raw in slots
     )
     if overflow_seen is None:
-        errors.append("independent verifier omitted the overflow-row decision")
+        # For an empty schedule only, five explicitly transcribed empty rows
+        # plus no overflow row is equivalent to the missing false boolean.
+        # Funded schedules keep the stricter explicit overflow requirement.
+        explicit_empty_printed_rows = (
+            not primary_has_funded
+            and set(range(1, 6)).issubset(ordinal_set)
+            and not _operational_slot_fingerprint(slots)
+            and not has_overflow_slots
+        )
+        if not explicit_empty_printed_rows:
+            errors.append("independent verifier omitted the overflow-row decision")
     elif overflow_seen and not has_funded_overflow:
         errors.append("independent verifier saw overflow rows but did not transcribe them")
     elif not overflow_seen and has_overflow_slots:
@@ -843,7 +889,10 @@ def _verifier_schedule_errors(verifier: dict) -> list[str]:
 
 
 def _verification_disagreements(primary: dict, verifier: dict) -> list[str]:
-    disagreements = _verifier_schedule_errors(verifier)
+    primary_fingerprint = _operational_slot_fingerprint(primary.get("pd_slots"))
+    disagreements = _verifier_schedule_errors(
+        verifier, primary_has_funded=bool(primary_fingerprint)
+    )
     if _normalized_member(primary.get("member_number")) != _normalized_member(
         verifier.get("member_number")
     ):
@@ -855,13 +904,13 @@ def _verification_disagreements(primary: dict, verifier: dict) -> list[str]:
         disagreements.append("independent verifier disagreed on form type")
     if primary.get("is_pt_agreement") != _bool(verifier.get("is_pt_agreement")):
         disagreements.append("independent verifier disagreed on document type")
-    if _operational_slot_fingerprint(primary.get("pd_slots")) != _operational_slot_fingerprint(
-        verifier.get("pd_slots")
-    ):
+    if primary_fingerprint != _operational_slot_fingerprint(verifier.get("pd_slots")):
         disagreements.append("independent verifier disagreed on funded postdate schedule")
     if _has_critical_uncertainty(verifier.get("uncertain_fields")):
         disagreements.append("independent verifier reported critical uncertainty")
-    if _has_critical_uncertainty(verifier.get("warnings")):
+    if _has_critical_uncertainty(
+        verifier.get("warnings"), require_uncertainty_language=True
+    ):
         disagreements.append("independent verifier warned about a critical field")
     return list(dict.fromkeys(disagreements))
 
