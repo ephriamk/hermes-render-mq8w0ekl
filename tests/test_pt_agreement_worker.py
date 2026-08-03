@@ -267,7 +267,8 @@ class AgreementWorkerTests(unittest.TestCase):
             {"ordinal": ordinal, "amount_value": None, "date_iso": None}
             for ordinal in range(1, 6)
         ]
-        blank_slots[0]["amount_value"] = 0
+        blank_slots[0].update(state="blank", amount_value=0)
+        blank_slots[1].update(state="zero", amount_value=None)
         primary = _primary(
             total_paid_today=599.5,
             remaining_balance=0,
