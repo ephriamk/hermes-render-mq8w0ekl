@@ -56,12 +56,15 @@ def _primary(**overrides):
 
 
 def _verifier(primary):
+    slots = primary.get("pd_slots") or []
     return {
         "member_number": primary.get("member_number"),
         "agreement_date": primary.get("agreement_date"),
         "form_type": primary.get("form_type"),
         "is_pt_agreement": primary.get("is_pt_agreement"),
-        "pd_slots": primary.get("pd_slots"),
+        "pd_slots": slots,
+        "overflow_rows_seen": any(slot.get("ordinal", 0) > 5 for slot in slots),
+        "corrections_seen": False,
         "uncertain_fields": [],
         "warnings": [],
     }
@@ -83,6 +86,53 @@ class AgreementWorkerTests(unittest.TestCase):
         result = worker._finalize_extraction(primary, verifier, "1234567")
         self.assertEqual(result["status"], "partial")
         self.assertTrue(any("funded postdate schedule" in w for w in result["warnings"]))
+
+    def test_missing_verifier_schedule_is_review_only(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier.pop("pd_slots")
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(any("omitted the postdate schedule" in w for w in result["warnings"]))
+
+    def test_incomplete_verifier_printed_rows_are_review_only(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier["pd_slots"] = verifier["pd_slots"][:4]
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(any("rows 1-5" in w for w in result["warnings"]))
+
+    def test_verifier_overflow_flag_requires_transcribed_overflow_rows(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier["overflow_rows_seen"] = True
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(any("saw overflow rows" in w for w in result["warnings"]))
+
+    def test_blank_overflow_row_does_not_satisfy_overflow_verification(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier["pd_slots"] = verifier["pd_slots"] + [
+            {"ordinal": 6, "state": "blank", "amount_value": None, "date_iso": None}
+        ]
+        verifier["overflow_rows_seen"] = True
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(any("saw overflow rows" in w for w in result["warnings"]))
+
+    def test_verifier_postdate_warning_is_review_only(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier["warnings"] = ["Postdate row 5 amount may be faint"]
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+        self.assertEqual(result["status"], "partial")
+
+    def test_postdate_uncertainty_worded_as_pd_row_is_review_only(self):
+        primary = _primary(uncertain_fields=["PD row 6 amount is faint"])
+        result = worker._finalize_extraction(primary, _verifier(primary), "1234567")
+        self.assertEqual(result["status"], "partial")
 
     def test_source_member_mismatch_preserves_visual_read(self):
         primary = _primary()

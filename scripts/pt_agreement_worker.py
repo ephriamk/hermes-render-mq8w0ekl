@@ -45,14 +45,20 @@ EXIT_RETRYABLE_FAILURE = 20
 EXIT_TERMINAL_FAILURE = 21
 EXIT_LOCKED = 75
 
-CRITICAL_UNCERTAINTY_PREFIXES = (
-    "agreement_date",
-    "form_type",
-    "is_pt_agreement",
-    "member_number",
-    "pd_slot",
-    "pd_slots",
+CRITICAL_UNCERTAINTY_TERMS = (
+    "agreement date",
+    "form type",
+    "pt agreement",
+    "member number",
+    "pd row",
+    "pd slot",
     "postdate",
+    "post date",
+    "schedule",
+    "slot",
+    "payment schedule",
+    "installment",
+    "overflow",
 )
 
 TEXT_FIELDS = (
@@ -749,8 +755,78 @@ def _operational_slot_fingerprint(slots: Any) -> list[tuple[int, str, str]]:
     return sorted(fingerprint)
 
 
+def _has_critical_uncertainty(items: Any) -> bool:
+    for item in _string_list(items):
+        normalized = " ".join(
+            item.lower().replace("_", " ").replace("[", " ").replace("]", " ").split()
+        )
+        if any(term in normalized for term in CRITICAL_UNCERTAINTY_TERMS):
+            return True
+    return False
+
+
+def _verifier_schedule_errors(verifier: dict) -> list[str]:
+    """Require explicit negative evidence before accepting an empty schedule."""
+    slots = verifier.get("pd_slots")
+    if not isinstance(slots, list):
+        return ["independent verifier omitted the postdate schedule"]
+
+    errors: list[str] = []
+    ordinals: list[int] = []
+    for raw in slots:
+        if not isinstance(raw, dict):
+            errors.append("independent verifier returned a malformed postdate row")
+            continue
+        ordinal = _integer(raw.get("ordinal"))
+        state = _text(raw.get("state"))
+        amount = _money(raw.get("amount_value"))
+        date_iso = _iso_date(raw.get("date_iso"))
+        if ordinal is None or not 1 <= ordinal <= 20:
+            errors.append("independent verifier returned an invalid postdate ordinal")
+            continue
+        ordinals.append(ordinal)
+        if raw.get("amount_value") not in (None, "") and amount is None:
+            errors.append("independent verifier returned a malformed postdate amount")
+        if raw.get("date_iso") not in (None, "") and date_iso is None:
+            errors.append("independent verifier returned a malformed postdate date")
+        if state not in {"filled", "zero", "blank"}:
+            errors.append("independent verifier omitted a valid postdate row state")
+        elif state == "filled" and not (amount is not None and amount > 0 and date_iso):
+            errors.append("independent verifier returned an incomplete funded postdate")
+        elif state == "zero" and not (amount == 0 and not date_iso):
+            errors.append("independent verifier returned an inconsistent zero postdate")
+        elif state == "blank" and (amount is not None or date_iso):
+            errors.append("independent verifier returned values in a blank postdate row")
+
+    ordinal_set = set(ordinals)
+    if len(ordinals) != len(ordinal_set):
+        errors.append("independent verifier returned duplicate postdate ordinals")
+    if not set(range(1, 6)).issubset(ordinal_set):
+        errors.append("independent verifier did not explicitly cover printed rows 1-5")
+    if ordinal_set and ordinal_set != set(range(1, max(ordinal_set) + 1)):
+        errors.append("independent verifier returned a non-contiguous postdate schedule")
+
+    overflow_seen = _bool(verifier.get("overflow_rows_seen"))
+    has_overflow_slots = any(ordinal > 5 for ordinal in ordinal_set)
+    has_funded_overflow = any(
+        isinstance(raw, dict)
+        and (_integer(raw.get("ordinal")) or 0) > 5
+        and _text(raw.get("state")) == "filled"
+        and (_money(raw.get("amount_value")) or 0) > 0
+        and _iso_date(raw.get("date_iso")) is not None
+        for raw in slots
+    )
+    if overflow_seen is None:
+        errors.append("independent verifier omitted the overflow-row decision")
+    elif overflow_seen and not has_funded_overflow:
+        errors.append("independent verifier saw overflow rows but did not transcribe them")
+    elif not overflow_seen and has_overflow_slots:
+        errors.append("independent verifier contradicted its overflow-row decision")
+    return list(dict.fromkeys(errors))
+
+
 def _verification_disagreements(primary: dict, verifier: dict) -> list[str]:
-    disagreements: list[str] = []
+    disagreements = _verifier_schedule_errors(verifier)
     if _normalized_member(primary.get("member_number")) != _normalized_member(
         verifier.get("member_number")
     ):
@@ -766,13 +842,11 @@ def _verification_disagreements(primary: dict, verifier: dict) -> list[str]:
         verifier.get("pd_slots")
     ):
         disagreements.append("independent verifier disagreed on funded postdate schedule")
-    verifier_uncertainty = _string_list(verifier.get("uncertain_fields"))
-    if any(
-        item.lower().startswith(CRITICAL_UNCERTAINTY_PREFIXES)
-        for item in verifier_uncertainty
-    ):
+    if _has_critical_uncertainty(verifier.get("uncertain_fields")):
         disagreements.append("independent verifier reported critical uncertainty")
-    return disagreements
+    if _has_critical_uncertainty(verifier.get("warnings")):
+        disagreements.append("independent verifier warned about a critical field")
+    return list(dict.fromkeys(disagreements))
 
 
 def _finalize_extraction(
@@ -817,10 +891,7 @@ def _finalize_extraction(
         # agree and both readers found no funded postdate schedule.
         extraction["plan_type"] = "paid_in_full" if fully_paid_on_page else "unclear"
 
-    primary_critical_uncertainty = any(
-        item.lower().startswith(CRITICAL_UNCERTAINTY_PREFIXES)
-        for item in primary_uncertainty
-    )
+    primary_critical_uncertainty = _has_critical_uncertainty(primary_uncertainty)
     missing_critical = (
         not extraction.get("agreement_date")
         or not extraction.get("member_number")
