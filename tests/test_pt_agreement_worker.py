@@ -267,6 +267,7 @@ class AgreementWorkerTests(unittest.TestCase):
             {"ordinal": ordinal, "amount_value": None, "date_iso": None}
             for ordinal in range(1, 6)
         ]
+        blank_slots[0]["amount_value"] = 0
         primary = _primary(
             total_paid_today=599.5,
             remaining_balance=0,
@@ -281,6 +282,22 @@ class AgreementWorkerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["plan_type"], "paid_in_full")
+
+    def test_missing_state_with_positive_amount_still_forces_review(self):
+        primary = _primary()
+        verifier = _verifier(primary)
+        verifier["pd_slots"][0] = {
+            "ordinal": 1,
+            "amount_value": 100,
+            "date_iso": "2026-02-01",
+        }
+
+        result = worker._finalize_extraction(primary, verifier, "1234567")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(
+            any("omitted a valid postdate row state" in w for w in result["warnings"])
+        )
 
     def test_funded_schedule_still_requires_explicit_overflow_decision(self):
         primary = _primary()

@@ -31,7 +31,7 @@ from urllib.request import Request, urlopen
 
 JOB_TYPE = "parse_pt_agreement_v1"
 CONTRACT_VERSION = "pdn-v1"
-PROMPT_VERSION = "pt-agreement-v9-empty-schedule-verification"
+PROMPT_VERSION = "pt-agreement-v10-empty-schedule-verification"
 DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_PROVIDER = "openai-codex"
 DEFAULT_REASONING_EFFORT = "high"
@@ -842,6 +842,8 @@ def _verifier_schedule_errors(verifier: dict, *, primary_has_funded: bool) -> li
             # present, because that could hide a funded installment.
             if amount is None and date_iso is None:
                 state = "blank"
+            elif amount == 0 and date_iso is None:
+                state = "zero"
             else:
                 errors.append("independent verifier omitted a valid postdate row state")
         elif state == "filled" and not (amount is not None and amount > 0 and date_iso):
