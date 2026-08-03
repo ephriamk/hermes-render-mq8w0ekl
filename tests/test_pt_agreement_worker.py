@@ -1,6 +1,10 @@
 import importlib.util
+import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "scripts" / "pt_agreement_worker.py"
@@ -71,6 +75,55 @@ def _verifier(primary):
 
 
 class AgreementWorkerTests(unittest.TestCase):
+    def test_reader_defaults_to_gpt_5_6_sol_high(self):
+        self.assertEqual(worker.DEFAULT_PROVIDER, "openai-codex")
+        self.assertEqual(worker.DEFAULT_MODEL, "gpt-5.6-sol")
+        self.assertEqual(worker.DEFAULT_REASONING_EFFORT, "high")
+
+    def test_model_call_sends_configured_reasoning_effort(self):
+        captured = {}
+
+        def fake_call_llm(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content='{"ok": true}')
+                    )
+                ]
+            )
+
+        agent_module = ModuleType("agent")
+        auxiliary_module = ModuleType("agent.auxiliary_client")
+        auxiliary_module.call_llm = fake_call_llm
+        agent_module.auxiliary_client = auxiliary_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            image_path = Path(directory) / "view.jpg"
+            image_path.write_bytes(b"fake-jpeg")
+            with patch.dict(
+                sys.modules,
+                {
+                    "agent": agent_module,
+                    "agent.auxiliary_client": auxiliary_module,
+                },
+            ):
+                result, _ = worker._invoke_model(
+                    "Return JSON.",
+                    [("test view", image_path)],
+                    provider="openai-codex",
+                    model="gpt-5.6-sol",
+                    reasoning_effort="high",
+                    timeout=90,
+                )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(captured["provider"], "openai-codex")
+        self.assertEqual(captured["model"], "gpt-5.6-sol")
+        self.assertEqual(
+            captured["extra_body"], {"reasoning": {"effort": "high"}}
+        )
+
     def test_matching_reads_produce_payment_plan(self):
         primary = _primary()
         result = worker._finalize_extraction(primary, _verifier(primary), "1234567")

@@ -32,8 +32,10 @@ from urllib.request import Request, urlopen
 JOB_TYPE = "parse_pt_agreement_v1"
 CONTRACT_VERSION = "pdn-v1"
 PROMPT_VERSION = "pt-agreement-v8-identity-crosscheck"
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_PROVIDER = "openai-codex"
+DEFAULT_REASONING_EFFORT = "high"
+VALID_REASONING_EFFORTS = {"none", "low", "medium", "high", "xhigh", "max"}
 DEFAULT_API_BASE = "https://ecacombined-1.onrender.com"
 DEFAULT_ENV_FILE = "/opt/data/.env"
 DEFAULT_LOCK_FILE = "/tmp/eca_pt_agreement_worker.lock"
@@ -485,6 +487,7 @@ def _invoke_model(
     *,
     provider: str,
     model: str,
+    reasoning_effort: str,
     timeout: int,
 ) -> tuple[dict, float]:
     hermes_root = os.environ.get("HERMES_APP_ROOT", "/opt/hermes")
@@ -507,7 +510,7 @@ def _invoke_model(
             messages=_model_messages(prompt, views),
             max_tokens=5000,
             timeout=timeout,
-            extra_body={"reasoning": {"effort": "low"}},
+            extra_body={"reasoning": {"effort": reasoning_effort}},
         )
         content = response.choices[0].message.content
     except WorkerError:
@@ -929,6 +932,7 @@ def _process_asset(
     *,
     provider: str,
     model: str,
+    reasoning_effort: str,
     model_timeout: int,
 ) -> dict:
     started = time.monotonic()
@@ -940,6 +944,7 @@ def _process_asset(
             views,
             provider=provider,
             model=model,
+            reasoning_effort=reasoning_effort,
             timeout=model_timeout,
         )
         # Source context is intentionally fetched only after the primary visual read.
@@ -949,6 +954,7 @@ def _process_asset(
             views,
             provider=provider,
             model=model,
+            reasoning_effort=reasoning_effort,
             timeout=model_timeout,
         )
     extraction = _finalize_extraction(
@@ -965,6 +971,9 @@ def _process_asset(
         status=extraction["status"],
         plan_type=extraction["plan_type"],
         postdate_rows=len(extraction["pd_slots"]),
+        provider=provider,
+        model=model,
+        reasoning_effort=reasoning_effort,
         promotion_status=response.get("promotion_status") or response.get("result"),
     )
     return {
@@ -987,9 +996,19 @@ def run() -> int:
     token = os.environ.get("ECA_HERMES_SERVICE_TOKEN", "").strip()
     provider = os.environ.get("ECA_PT_READER_PROVIDER", DEFAULT_PROVIDER).strip()
     model = os.environ.get("ECA_PT_READER_MODEL", DEFAULT_MODEL).strip()
+    reasoning_effort = os.environ.get(
+        "ECA_PT_REASONING_EFFORT", DEFAULT_REASONING_EFFORT
+    ).strip().lower()
     lease_seconds = int(os.environ.get("ECA_PT_LEASE_SECONDS", DEFAULT_LEASE_SECONDS))
     model_timeout = int(os.environ.get("ECA_PT_MODEL_TIMEOUT", "90"))
     lease_seconds = max(90, min(600, lease_seconds))
+    if reasoning_effort not in VALID_REASONING_EFFORTS:
+        _json_log(
+            "configuration_error",
+            invalid="ECA_PT_REASONING_EFFORT",
+            value=reasoning_effort,
+        )
+        return EXIT_TERMINAL_FAILURE
     if not token:
         _json_log("configuration_error", missing="ECA_HERMES_SERVICE_TOKEN")
         return EXIT_TERMINAL_FAILURE
@@ -1015,7 +1034,14 @@ def run() -> int:
                     code="SCHEMA_IMPOSSIBLE",
                     retryable=False,
                 )
-            _json_log("job_claimed", job_id=job_id, assets=len(asset_ids))
+            _json_log(
+                "job_claimed",
+                job_id=job_id,
+                assets=len(asset_ids),
+                provider=provider,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
             results: list[dict] = []
             with LeaseHeartbeat(
                 client, job_id, lease_token, lease_seconds
@@ -1035,6 +1061,7 @@ def run() -> int:
                             int(asset_id),
                             provider=provider,
                             model=model,
+                            reasoning_effort=reasoning_effort,
                             model_timeout=model_timeout,
                         )
                     )
@@ -1054,6 +1081,7 @@ def run() -> int:
                         "reader": "direct_verified_v1",
                         "provider": provider,
                         "model": model,
+                        "reasoning_effort": reasoning_effort,
                         "assets_total": len(results),
                         "asset_results": results,
                     },
