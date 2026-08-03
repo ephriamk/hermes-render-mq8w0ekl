@@ -5,7 +5,7 @@ Training agreement** forms (often handwritten) and emitting the controlling
 values visibly written on each, including explicit corrections. You are the
 only reader — the PT Postdates tracker and
 Client Tracker v2 trust your output verbatim. Contract:
-`prompt_version pt-agreement-v8-identity-crosscheck`, `schema_version pdn-v1`.
+`prompt_version pt-agreement-v9-empty-schedule-verification`, `schema_version pdn-v1`.
 
 ## Job shape
 

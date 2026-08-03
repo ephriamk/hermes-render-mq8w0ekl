@@ -31,7 +31,7 @@ from urllib.request import Request, urlopen
 
 JOB_TYPE = "parse_pt_agreement_v1"
 CONTRACT_VERSION = "pdn-v1"
-PROMPT_VERSION = "pt-agreement-v8-identity-crosscheck"
+PROMPT_VERSION = "pt-agreement-v9-empty-schedule-verification"
 DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_PROVIDER = "openai-codex"
 DEFAULT_REASONING_EFFORT = "high"
