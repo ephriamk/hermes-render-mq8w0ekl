@@ -1,21 +1,23 @@
 # parse_pt_agreement_v1 — reading scanned PT agreement forms
 
-You are reading single-page scanned Emerald City Athletics **Personal
-Training agreement** forms (often handwritten) and emitting the controlling
-values visibly written on each, including explicit corrections. You are the
-only reader — the PT Postdates tracker and
-Client Tracker v2 trust your output verbatim. Contract:
+This is the authoritative reading contract for single-page scanned Emerald
+City Athletics **Personal Training agreement** forms (often handwritten). The
+bounded worker makes one primary visual read, one fresh independent verification
+read, and deterministic arithmetic/identity/schedule checks. Neither model may
+write directly to the PT Postdates tracker or Client Tracker v2. Contract:
 `prompt_version pt-agreement-v11-nonfunded-row-verification`, `schema_version pdn-v1`.
 
 ## Job shape
 
-Payload: `{"asset_ids": [123, 124, ...]}` — up to 10 documents per job.
-For EACH asset id, in order:
+Payload: `{"asset_ids": [123]}` — exactly one document per job. A multi-asset
+payload is rejected so one lease, one memory boundary, and one audit record map
+to one scanned page.
 
 1. Download the PDF (job-scoped):
    `GET $ECA_API_BASE_URL/api/hermes/jobs/{job_id}/pt-asset/{asset_id}/pdf?lease_token={lease_token}`
-2. Read it completely and record a draft `member_number` from the page before
-   asking for source context. Zoom on anything faint before calling it blank.
+2. The primary reader reads the complete page plus overlapping identity and PD
+   detail views. It must record a draft `member_number` from the page before
+   source context is fetched. Zoom on anything faint before calling it blank.
 3. Fetch the job-scoped identity cross-check:
    `GET $ECA_API_BASE_URL/api/hermes/jobs/{job_id}/pt-asset/{asset_id}/context?lease_token={lease_token}`.
    Compare `expected_member_number` with the independently read draft. If they
@@ -24,15 +26,18 @@ For EACH asset id, in order:
    visibly supports it. If the page visibly differs or remains uncertain,
    preserve the best visible read, mark the extraction partial, and warn about
    the exact uncertain position; deterministic review will hold it.
-4. Post the extraction:
+4. A fresh verifier receives the page views without source metadata or the
+   primary answer. It independently returns member/date/form identity, every
+   printed PD row 1–5, any row 6+, and an explicit overflow-row decision.
+5. Deterministic code compares the two reads and posts the extraction:
    `POST $ECA_API_BASE_URL/api/hermes/jobs/{job_id}/pt-asset/{asset_id}/parse`
    with `{"lease_token": "...", "extraction": { ...pdn-v1 fields... }}`.
    A response of `already_parsed` is fine — move on.
-5. If a document cannot be read at all (corrupt download, blank scan), post
+6. If a document cannot be read at all (corrupt download, blank scan), post
    `{"lease_token": "...", "error": "<one line why>"}` instead — NEVER skip
    silently. The error counts toward a retry cap and the ops alert.
 
-When every asset is handled, `POST /{job_id}/complete` as usual.
+After the one asset is acknowledged, `POST /{job_id}/complete` as usual.
 
 ## Extraction rules (visible agreement truth, never invented values)
 
@@ -51,7 +56,9 @@ When every asset is handled, `POST /{job_id}/complete` as usual.
   `plan_type`, `agreement_date`, and `contract_version`. Missing promotion
   fields are stored for review and cannot affect the live tracker.
 * `plan_type`: `payment_plan` when the PD schedule has funded rows;
-  `paid_in_full` when paid today with no funded PD rows; else `unclear`.
+  `paid_in_full` only when there are no funded PD rows, paid today equals the
+  page total, and remaining balance is zero or blank; else `unclear`. A signing
+  payment by itself never proves paid-in-full and never proves collection.
 * Dates ISO (`YYYY-MM-DD`) in `*_iso`/date fields; the controlling visible form
   is preserved in `*_text` fields.
 * `member_number` is an identity field: first copy it from the PDF digit by
@@ -110,6 +117,16 @@ you conclude the form is inconsistent.
 Ordinals are accepted up to 20. If a page genuinely appears to carry more than
 that, record the first 20 and say so loudly in `warnings` rather than guessing.
 
+## Independent verification — fail closed
+
+The verifier must explicitly return rows 1–5 even when every row is blank or
+zero. Missing/malformed rows, duplicate/non-contiguous ordinals, invalid row
+states, or an omitted overflow decision force `status: "partial"` and human
+review. `overflow_rows_seen: true` without matching row 6+ transcriptions also
+forces review. Empty-vs-empty fingerprints are never accepted as proof that a
+schedule is absent unless the verifier explicitly covered all five printed
+rows and confirmed that no overflow rows were seen.
+
 ## contract_version — copy the `schema_version` from the top of THIS file
 
 Set `contract_version` to the `schema_version` value printed in the header
@@ -150,9 +167,26 @@ member_first_name, member_number, trainer, sold_by, number_of_sessions,
 amount_per_session, sub_total, tax, total, total_paid_today,
 remaining_balance, duration_of_sessions, number_of_months, sessions_per_week,
 signature_present, pd_slots[], the five checks, confidence (0–1),
-contract_version, warnings[]` — warnings verbose and specific, one string per observation
-(e.g. "Sub Total 400.00 + Tax 40.00 = 440.00 does not equal printed Total
-442.00 (off by 2.00)").
+contract_version, source_sha256, warnings[]` — warnings verbose and specific,
+one string per observation (e.g. "Sub Total 400.00 + Tax 40.00 = 440.00 does
+not equal printed Total 442.00 (off by 2.00)").
+
+### source_sha256 — the cross-attribution guard (REQUIRED)
+
+Set `source_sha256` to the SHA-256 hex digest of the EXACT PDF bytes you
+extracted from — compute it on the downloaded file itself (`sha256sum` /
+`hashlib.sha256`), per document, before reading. When a job carries several
+asset_ids, compute each document's hash separately and keep it paired with
+that document's extraction to the end.
+
+Why it is required: batch reads on 2026-07-31/08-01 posted extractions
+against each other's assets in off-by-one rotations — 20 documents ended up
+carrying another member's parse, and live charges displayed the wrong
+member's signed agreement. The server refuses any extraction whose
+`source_sha256` does not match the asset it is posted to, so a mis-paired
+write now fails loudly at delivery instead of silently mis-filing. An
+extraction without the field is still accepted (older contract), but always
+send it.
 
 ## Promotion boundary
 
