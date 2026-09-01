@@ -193,7 +193,11 @@ send it.
 The backend always stores the extraction as immutable evidence. It promotes
 the attempt into the live tracker only when the contract matches, the document
 is explicitly complete and legible, the PT form/plan/identity are recognized,
-every funded row has both date and amount, and no applicable arithmetic check
-is explicitly false. A blank printed remaining-balance box does not invalidate
-an otherwise complete future schedule. Signature presence and
-`total_paid_today` never prove collection.
+every funded row has both date and amount, and no required arithmetic check is
+MISSING. A check that is present and explicitly `false` — internally
+inconsistent printed numbers, faithfully transcribed — promotes anyway
+(owner ruling 2026-09-01): the schedule reaches the tracker flagged
+`header_math_inconsistent`, and your warnings are what the human reads to
+resolve the paper, so keep them verbose and exact. A blank printed
+remaining-balance box does not invalidate an otherwise complete future
+schedule. Signature presence and `total_paid_today` never prove collection.
