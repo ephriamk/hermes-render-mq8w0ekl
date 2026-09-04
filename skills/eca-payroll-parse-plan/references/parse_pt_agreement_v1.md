@@ -201,3 +201,9 @@ inconsistent printed numbers, faithfully transcribed — promotes anyway
 resolve the paper, so keep them verbose and exact. A blank printed
 remaining-balance box does not invalidate an otherwise complete future
 schedule. Signature presence and `total_paid_today` never prove collection.
+Keep marking a verifier OMISSION partial exactly as this contract requires —
+but know the backend now promotes that one shape anyway (owner ruling
+2026-09-01, flagged `promoted_without_independent_verification`) when the
+primary read is otherwise complete: an unanswered second opinion is reader
+infrastructure, not the document. A verifier that answered DIFFERENTLY is a
+genuine dispute and still benches.
