@@ -196,7 +196,9 @@
   }
 
   function upgrade(code) {
-    var pre = code.closest("pre") || code;
+    // The engine wraps fenced code in its own "code card" (data-slot="code-card"); the widget goes
+    // beside that card, never inside it, so the card's code font and height limit do not apply.
+    var pre = code.closest('[data-slot="code-card"]') || code.closest("pre") || code;
     var text = code.textContent;
     if (pre.dataset.ecaSeen === text) return;
     pre.dataset.ecaSeen = text;
@@ -229,7 +231,7 @@
       if (c.tagName === "PRE" && c.querySelector("code")) continue;
       var t = c.textContent || "";
       if (t.indexOf('"eca"') < 0) {
-        var p = c.closest("pre") || c;
+        var p = c.closest('[data-slot="code-card"]') || c.closest("pre") || c;
         if (p.dataset.ecaSeen) upgrade(c);
         continue;
       }
