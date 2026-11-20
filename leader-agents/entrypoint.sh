@@ -17,7 +17,6 @@ NGX=$!
 echo "[entrypoint] supervisor pid $SUP, nginx pid $NGX, port $PORT"
 
 
-if [ -n "${ECA_DIAG_SLUG:-}" ]; then ( sh /opt/eca/diag.sh "$ECA_DIAG_SLUG" ) & fi
 # On shutdown the supervisor first lets every workspace close its files.
 trap 'kill -TERM "$SUP" 2>/dev/null; wait "$SUP" 2>/dev/null; kill "$NGX" 2>/dev/null; exit 0' TERM INT
 while kill -0 "$SUP" 2>/dev/null && kill -0 "$NGX" 2>/dev/null; do sleep 2; done

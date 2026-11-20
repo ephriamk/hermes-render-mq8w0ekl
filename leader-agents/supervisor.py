@@ -575,7 +575,7 @@ def start_agent(a: dict, bare: bool = False) -> None:
         rt.update(status="error", detail=str(exc)[:200])
 
 
-TOKEN_REFRESH_DAYS = 20      # the backend's tokens last 30 days
+TOKEN_REFRESH_DAYS = 4       # the backend's tokens last 7 days (review 11-20)
 _pending_tokens: dict = {}   # slug -> token waiting to be written into the home (memory only)
 
 
@@ -1153,6 +1153,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if s is None:
             return self._send(401, b"signed out")
         if path == "/_eca/confirm":
+            # Only this site's own confirm page may confirm (review 11-20): a form on another
+            # site, even a sibling subdomain, carries a different Origin.
+            origin = self.headers.get("Origin") or ""
+            if origin != f"https://{self.headers.get('Host', '')}":
+                return self._send(403, b"refused")
             s["confirmed"] = True
             return self._send(303, headers={"Location": "/_eca/start"})
         if path in ("/_eca/connect/start", "/_eca/connect/input"):
