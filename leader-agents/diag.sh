@@ -13,5 +13,5 @@ run() {
 sleep 60
 run "codex login status"
 run "grep -E 'default:|provider:|openai_runtime' \$HERMES_HOME/config.yaml"
-run "timeout 180 codex exec --skip-git-repo-check 'Use the eca MCP tool eca_whoami, then eca_all_clubs for yesterday. Reply in two lines: the clubs you can see, and each club total_cash_mtd.' </dev/null"
+run "timeout 180 codex exec --skip-git-repo-check -c 'mcp_servers.eca.default_tools_approval_mode=\"approve\"' 'Use the eca MCP tool eca_whoami, then eca_all_clubs for yesterday. Reply in two lines: the clubs you can see, and each club total_cash_mtd.' </dev/null"
 echo "[diag] ===== DONE ====="
