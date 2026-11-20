@@ -72,11 +72,12 @@
       if (OUTSIDE.test(after) && node.parentElement) outside.push(node.parentElement);
     }
     for (var i = 0; i < outside.length; i++) hideFor(outside[i]);
-    var labelled = root.querySelectorAll("[aria-label],[title],[placeholder]");
+    var labelled = root.querySelectorAll("[aria-label],[title],[placeholder],[data-placeholder]");
     for (var j = 0; j < labelled.length; j++) {
       var el = labelled[j];
-      if (el.closest(KEEP) && !el.closest(CHROME_IN_THREAD)) continue;
-      ["aria-label", "title", "placeholder"].forEach(function (attr) {
+      // Placeholders are the screen's own hint text, never what someone typed: always scrubbed.
+      var inKept = el.closest(KEEP) && !el.closest(CHROME_IN_THREAD);
+      (inKept ? ["placeholder", "data-placeholder"] : ["aria-label", "title", "placeholder", "data-placeholder"]).forEach(function (attr) {
         var v = el.getAttribute(attr);
         if (!v) return;
         var w = swap(v);
