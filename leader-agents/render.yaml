@@ -5,7 +5,7 @@ services:
   - type: web
     name: eca-agents-trial
     runtime: docker
-    plan: standard
+    plan: pro
     region: oregon
     repo: https://github.com/ephriamk/hermes-render-mq8w0ekl
     branch: leader-agents
