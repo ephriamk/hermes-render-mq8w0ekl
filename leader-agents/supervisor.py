@@ -1107,7 +1107,11 @@ def main() -> None:
     log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; data in {DATA}"
         f"{' (on its own disk)' if os.path.ismount(DATA) else ' (NOT on a disk: lost at restart)'}")
     if SELFTEST:
-        import selftest          # noqa: PLC0415  (only on request; see selftest.py)
+        # Loaded by its full path: with python -I the script's own folder is not on the import path.
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("eca_selftest", Path(__file__).resolve().parent / "selftest.py")
+        selftest = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selftest)
         threading.Thread(target=selftest.run, args=(sys.modules[__name__],), daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: _stopping.set())
     signal.signal(signal.SIGINT, lambda *_: _stopping.set())
