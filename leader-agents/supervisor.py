@@ -89,6 +89,7 @@ CODEX_EMPLOYEES = {e.strip() for e in os.environ.get("ECA_CODEX_EMPLOYEES", "").
 # The model ChatGPT plans accept through Codex (gpt-5.4 is refused: "not supported when using
 # Codex with a ChatGPT account", 2026-11-19); this is Codex's own default.
 CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-6.2-sol")
+CODEX_ECA_APPROVAL = 'default_tools_approval_mode = "approve"'
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
@@ -400,13 +401,19 @@ def _codex_setup(a: dict) -> None:
         raise RuntimeError("could not hand the ECA tools to ChatGPT")
     got = home_ops(a, [{"op": "read", "path": ".codex/config.toml"}, {"op": "read", "path": ".hermes/.env"}])
     toml, env = got[0].get("text") or "", got[1].get("text") or ""
-    if "${ECA_GATEWAY_TOKEN}" in toml:
+    fixed = toml
+    if "${ECA_GATEWAY_TOKEN}" in fixed:
         token = next((ln.split("=", 1)[1].strip() for ln in env.splitlines()
                       if ln.startswith("ECA_GATEWAY_TOKEN=")), "")
         if not re.fullmatch(r"[A-Za-z0-9_\-.]{20,200}", token):
             raise RuntimeError("the ECA data token is missing; open your agent from the portal again")
-        res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600,
-                            "content": toml.replace("${ECA_GATEWAY_TOKEN}", token)}])
+        fixed = fixed.replace("${ECA_GATEWAY_TOKEN}", token)
+    # ECA's data tools are read-only and scoped on the server: run them without asking each time
+    # (Codex otherwise wants a click per lookup). Only the eca server; anything else still asks.
+    if "[mcp_servers.eca]" in fixed and CODEX_ECA_APPROVAL not in fixed:
+        fixed = fixed.replace("[mcp_servers.eca]\n", "[mcp_servers.eca]\n" + CODEX_ECA_APPROVAL + "\n", 1)
+    if fixed != toml:
+        res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600, "content": fixed}])
         if not res[0].get("ok"):
             raise RuntimeError("could not write the ChatGPT settings")
 
