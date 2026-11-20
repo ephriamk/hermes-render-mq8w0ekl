@@ -66,12 +66,18 @@
     findLink();
   }
 
-  function begin() {
+  // fresh: start a new sign-in even if one is running (used after one has ended).
+  function begin(fresh) {
     msg.textContent = ""; link = ""; text = ""; openBtn.disabled = true; pasteBtn.disabled = true;
     wait.textContent = "Getting your link…";
     term.reset();
-    return fetch("/_eca/connect/start", { method: "POST", credentials: "same-origin" }).then(function (r) {
-      if (!r.ok) { msg.textContent = "Could not start the sign-in. Reload this page to try again."; return; }
+    return fetch("/_eca/connect/start", { method: "POST", credentials: "same-origin", body: fresh ? "fresh" : "" }).then(function (r) {
+      if (!r.ok) { msg.textContent = "Could not start the sign-in. Reload this page to try again."; return null; }
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      // Coming back to a sign-in already under way: the code can be pasted straight away.
+      if (d.resumed) pasteBtn.disabled = false;
       if (es) es.close();
       es = new EventSource("/_eca/connect/stream");
       es.onmessage = function (e) { feed(e.data); };
@@ -97,12 +103,12 @@
       if (ended) {
         if (++restarts > 3) { msg.textContent = "The sign-in keeps closing. Reload this page to try again."; return; }
         msg.textContent = "The sign-in closed before it finished. Starting it again…";
-        setTimeout(function () { begin(); }, 1500);
+        setTimeout(function () { begin(true); }, 1500);
         return;
       }
       if (!finished) setTimeout(check, 3000);
     }).catch(function () { if (!finished && !ended) setTimeout(check, 3000); });
   }
 
-  begin().then(function () { setTimeout(check, 4000); });
+  begin(false).then(function () { setTimeout(check, 4000); });
 })();

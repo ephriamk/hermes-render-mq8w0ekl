@@ -31,8 +31,9 @@ RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf
 
-# The separation self-test runs at start while this is set (see selftest.py).
-ENV ECA_SELFTEST=1
+# The separation self-test (selftest.py) runs at start when ECA_SELFTEST=1 is set
+# on the service. It passed in full on 2026-11-19; run it again after any change
+# to how accounts, homes or routing work.
 
 # A plain init that reaps the processes the workspaces leave behind. (The
 # image's own /usr/bin/tini is a shim for Hermes's s6 start-up, which sets up

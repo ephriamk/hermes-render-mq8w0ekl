@@ -552,15 +552,25 @@ class Connect:
             self.cond.notify_all()
 
 
-def connect_start(a: dict) -> None:
+def connect_start(a: dict, fresh: bool = False) -> bool:
+    """Start the Claude sign-in for a leader, or pick up the one already running.
+
+    Picking it up matters: the code Claude hands out belongs to the sign-in
+    that printed the link, so a page reload must not start a new one.
+    Returns True when an existing sign-in was resumed.
+    """
     with _lock:
-        old = _connects.pop(a["slug"], None)
+        old = _connects.get(a["slug"])
+        if old is not None and not old.done and not fresh and time.time() - old.started < 600:
+            return True
+        _connects.pop(a["slug"], None)
     if old is not None:
         old.close()
     ensure_account(a)
     c = Connect(a)
     with _lock:
         _connects[a["slug"]] = c
+    return False
 
 
 def signal_as(a: dict, sig: str, group: int | None = None) -> None:
@@ -865,11 +875,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(403, b"refused")
             if path.endswith("/start"):
                 try:
-                    connect_start(a)
+                    resumed = connect_start(a, fresh=b"fresh" in raw)
                 except Exception as exc:
                     log(f"{a['slug']}: could not start the Claude sign-in: {type(exc).__name__}")
                     return self._send(500, b"could not start")
-                return self._json(200, {"cols": CONNECT_COLS, "rows": CONNECT_ROWS})
+                return self._json(200, {"cols": CONNECT_COLS, "rows": CONNECT_ROWS, "resumed": resumed})
             c = _connects.get(a["slug"])
             if c is None or c.done:
                 return self._send(409, b"not running")
