@@ -21,6 +21,19 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/clau
 # on claude.ai (Gmail, Drive...) through their Claude sign-in; ECA's own tools are the way in.
 RUN mkdir -p /etc/claude-code && printf '{\n  "disableClaudeAiConnectors": true\n}\n' > /etc/claude-code/managed-settings.json \
  && chmod 0644 /etc/claude-code/managed-settings.json
+# Hermes managed scope: ECA policy every leader's Hermes obeys and no leader can override
+# (docs: user-guide/managed-scope.md). Root-owned, world-readable.
+RUN mkdir -p /etc/hermes && printf '%s\n' \
+  'plugins:' \
+  '  entries:' \
+  '    claude-subscription-directsdk-experimental:' \
+  '      settings:' \
+  '        extra_usage: stop' \
+  '        max_concurrent: 2' \
+  'telemetry:' \
+  '  shared_metrics:' \
+  '    enabled: false' > /etc/hermes/config.yaml \
+ && chmod 0755 /etc/hermes && chmod 0644 /etc/hermes/config.yaml
 
 # The terminal box used by the "Connect Claude" page (xterm.js, MIT).
 RUN mkdir -p /tmp/xt /opt/eca-vendor && cd /tmp/xt \

@@ -418,6 +418,7 @@ def provision(a: dict, bare: bool = False) -> None:
         for res in home_ops(a, writes):
             if not res.get("ok"):
                 raise RuntimeError("could not write the workspace settings")
+    _quarantine_autorun(a)
     if eng == "codex":
         _codex_setup(a)
     elif not bare and not got[3].get("exists"):
@@ -429,6 +430,32 @@ def provision(a: dict, bare: bool = False) -> None:
     if not bare:
         with _lock:
             save_state()
+
+
+QUARANTINE_SH = r'''
+set -u
+stamp=$(date +%Y%m%d%H%M%S)
+for d in hooks desktop-plugins; do
+  p="$HERMES_HOME/$d"
+  [ -L "$p" ] && { mkdir -p "$HERMES_HOME/quarantine"; mv "$p" "$HERMES_HOME/quarantine/$stamp-$d-link"; echo "moved $d (link)"; continue; }
+  [ -d "$p" ] || continue
+  if [ -n "$(ls -A "$p" 2>/dev/null)" ]; then
+    mkdir -p "$HERMES_HOME/quarantine" && mv "$p" "$HERMES_HOME/quarantine/$stamp-$d" && mkdir -p "$p" && echo "moved $d"
+  fi
+done
+'''
+
+
+def _quarantine_autorun(a: dict) -> None:
+    """Hooks (run inside the gateway with no prompt) and desktop plugins (run in the leader's browser)
+    are code that starts on its own. ECA installs none, so anything there was put there by the agent
+    or someone else: set it aside, as the leader, before the gateway starts (Hermes deep dive 11-20)."""
+    try:
+        r = run_as(a, ["/bin/sh", "-c", QUARANTINE_SH], timeout=30)
+        if (r.stdout or "").strip():
+            log(f"{a['slug']}: set aside unexpected auto-run code: {(r.stdout or '').strip()[:120]}")
+    except Exception as exc:
+        log(f"{a['slug']}: could not check auto-run folders ({type(exc).__name__})")
 
 
 def _codex_setup(a: dict) -> None:
