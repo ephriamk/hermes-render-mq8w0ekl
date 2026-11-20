@@ -191,7 +191,7 @@ def run(sup) -> None:
         t.join(60)
         check((sup._runtime.get(A["slug"]) or {}).get("status") == "error",
               "the supervisor refuses to send A's browser to a port held by B")
-        squat.kill()
+        sup.signal_as(B, "KILL")
     except Exception as exc:
         say("FAIL", f"self-test stopped early: {type(exc).__name__}: {str(exc)[:160]}")
     finally:
@@ -200,6 +200,7 @@ def run(sup) -> None:
                 sup.stop_agent(x, wait=5)
             except Exception:
                 pass
+            time.sleep(0.5)
             subprocess.run(["userdel", sup.account_name(x)], capture_output=True)
             subprocess.run(["groupdel", sup.account_name(x)], capture_output=True)
             sup._runtime.pop(x["slug"], None)

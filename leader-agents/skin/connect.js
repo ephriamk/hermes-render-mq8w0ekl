@@ -8,14 +8,13 @@
   });
   term.open(document.getElementById("t"));
   var openBtn = document.getElementById("open"), wait = document.getElementById("wait"), msg = document.getElementById("msg");
+  var pasteBtn = document.getElementById("paste");
   var link = "", text = "", es = null, finished = false;
   var ESC = String.fromCharCode(27), BEL = String.fromCharCode(7);
   var OSC = new RegExp(ESC + "\\][^" + BEL + ESC + "]*(?:" + BEL + "|" + ESC + "\\\\)", "g");
   var CSI = new RegExp(ESC + "\\[[0-9;?]*[ -/]*[@-~]", "g");
 
-  term.onData(function (d) {
-    fetch("/_eca/connect/input", { method: "POST", credentials: "same-origin", body: d }).catch(function () {});
-  });
+  term.onData(function (d) { send(d); });
 
   function findLink() {
     if (link) return;
@@ -30,9 +29,34 @@
       } catch (e) {}
     }
   }
+  function send(d) {
+    return fetch("/_eca/connect/input", { method: "POST", credentials: "same-origin", body: d }).catch(function () {});
+  }
   openBtn.addEventListener("click", function () {
-    if (link) { window.open(link, "_blank", "noopener,noreferrer"); term.focus(); }
+    if (!link) return;
+    window.open(link, "_blank", "noopener,noreferrer");
+    pasteBtn.disabled = false;
+    term.focus();
   });
+  // Types what is on the clipboard into Claude's program, exactly as a paste in
+  // the box would, then presses Enter. The code is not kept anywhere here.
+  pasteBtn.addEventListener("click", function () {
+    msg.textContent = "";
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      msg.textContent = "Click inside the box below, paste the code and press Enter."; term.focus(); return;
+    }
+    navigator.clipboard.readText().then(function (code) {
+      code = (code || "").trim();
+      if (!code || code.length > 600 || /\s/.test(code)) {
+        msg.textContent = "That does not look like the code. Press Copy on Claude's page, then try again."; return;
+      }
+      send(code + "\r"); term.focus();
+    }).catch(function () {
+      msg.textContent = "Your browser did not allow reading the clipboard. Click inside the box below, paste the code and press Enter.";
+      term.focus();
+    });
+  });
+  window.addEventListener("focus", function () { if (!finished) term.focus(); });
 
   function feed(b64) {
     var bin = atob(b64), bytes = new Uint8Array(bin.length);
@@ -43,7 +67,8 @@
   }
 
   function begin() {
-    msg.textContent = ""; link = ""; text = ""; openBtn.disabled = true; wait.textContent = "Getting your link…";
+    msg.textContent = ""; link = ""; text = ""; openBtn.disabled = true; pasteBtn.disabled = true;
+    wait.textContent = "Getting your link…";
     term.reset();
     return fetch("/_eca/connect/start", { method: "POST", credentials: "same-origin" }).then(function (r) {
       if (!r.ok) { msg.textContent = "Could not start the sign-in. Reload this page to try again."; return; }

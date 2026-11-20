@@ -540,10 +540,8 @@ class Connect:
                 pass
 
     def close(self) -> None:
-        try:
-            os.killpg(self.proc.pid, signal.SIGTERM)
-        except Exception:
-            pass
+        if self.proc.poll() is None:
+            signal_as(self.a, "TERM", group=self.proc.pid)
         try:
             os.close(self.master)
         except OSError:
@@ -565,28 +563,35 @@ def connect_start(a: dict) -> None:
         _connects[a["slug"]] = c
 
 
+def signal_as(a: dict, sig: str, group: int | None = None) -> None:
+    """Signal a leader's processes (all of them, or one process group).
+
+    The host gives this container's root no power to signal other accounts'
+    processes, so the request is made AS the leader, whose own processes it
+    may signal. That also means it can never hit anyone else's.
+    """
+    cmd = f"kill -{sig} -- -{int(group)}" if group else f"pkill -{sig} -U {int(a['uid'])}"
+    try:
+        run_as(a, ["/bin/sh", "-c", cmd + " 2>/dev/null; true"], timeout=15)
+    except Exception:
+        pass
+
+
 def stop_agent(a: dict, wait: float = 12.0) -> None:
-    """Ask the gateway to finish and close its files, then make sure it is gone."""
+    """Ask the workspace to finish and close its files, then make sure it is gone:
+    the gateway, the relay, and any terminals or jobs it started."""
     rt = _runtime.get(a["slug"]) or {}
     procs = [p for p in (rt.get("gateway"), rt.get("relay")) if _alive(p)]
-    for p in procs:
-        try:
-            os.killpg(p.pid, signal.SIGTERM)
-        except Exception:
-            pass
+    signal_as(a, "TERM")
     deadline = time.time() + wait
     while time.time() < deadline and any(_alive(p) for p in procs):
         time.sleep(0.2)
+    signal_as(a, "KILL")
     for p in procs:
-        if _alive(p):
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except Exception:
-                pass
-    # Terminals and jobs the workspace started live in their own sessions; end those too.
-    for sig in ("-TERM", "-KILL"):
-        subprocess.run(["pkill", sig, "-U", str(a["uid"])], capture_output=True)
-        time.sleep(0.3)
+        try:
+            p.wait(timeout=3)
+        except Exception:
+            pass
     rt.update(status="new", detail="", gateway=None, relay=None)
 
 

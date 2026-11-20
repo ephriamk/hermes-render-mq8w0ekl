@@ -25,13 +25,15 @@ a.quiet{color:#7fa08f;font-size:14px}
 <h1>Connect your Claude account</h1>
 <p class="sub">For __NAME__. You do this once. Your agent then runs on your own Claude membership.</p>
 <div id="steps">
-<div class="step"><div class="n">1</div><div><p>Open Claude's sign-in page and approve.</p>
-<button id="open" disabled>Open Claude sign-in</button><span id="wait">Getting your link…</span></div></div>
-<div class="step"><div class="n">2</div><div style="min-width:0;flex:1"><p>Claude then shows you a code. Copy it, click in
-the black box below, paste it and press Enter.</p>
+<div class="step"><div class="n">1</div><div><p>Sign in on Claude's own page (Google or email), then press Authorize.</p>
+<button id="open" disabled>Sign in to Claude</button><span id="wait">Getting your link…</span></div></div>
+<div class="step"><div class="n">2</div><div><p>Claude shows a code. Press Copy there, come back here and press:</p>
+<button id="paste" disabled>Paste my code</button></div></div>
+<div class="step"><div class="n">3</div><div style="min-width:0;flex:1"><p>That's it. This box is Claude's own sign-in program
+finishing the job.</p>
 <div id="box"><div id="t"></div></div>
-<small>The black box is Claude's own sign-in program. ECA never sees your Claude password, and nothing typed here is
-stored.</small></div></div>
+<small>ECA never sees your Claude password, and the code is not stored. If the button cannot read your clipboard, click
+inside the box, paste (Ctrl+V or ⌘V) and press Enter.</small></div></div>
 <p id="msg"></p>
 </div>
 <div id="ok"><b>Claude is connected.</b> Opening your agent…</div>
