@@ -146,7 +146,7 @@
   // The engine's own "sign in" prompts lead to ECA's Connect page instead of its set-up screens.
   document.addEventListener("click", function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest("button") : null;
-    if (btn && btn.closest('[data-slot="aui_error-card"]') && /^Sign in to Claude/.test((btn.textContent || "").trim())) {
+    if (btn && btn.closest('[data-slot="aui_error-card"]') && /^Sign in to (Claude|ChatGPT|OpenAI)/.test((btn.textContent || "").trim())) {
       ev.preventDefault(); ev.stopPropagation(); location.assign("/_eca/connect");
     }
   }, true);
@@ -173,6 +173,7 @@
     var parts = String(name).replace(/,/g, " ").trim().split(/\s+/);
     return ((parts[0] || "")[0] || "").toUpperCase() + ((parts.length > 1 ? parts[parts.length - 1][0] : "") || "").toUpperCase();
   }
+  var service = "Claude";
   function chip(name, claudeOn) {
     if (!name) return;
     var c = document.getElementById("eca-chip");
@@ -183,7 +184,7 @@
       c.appendChild(av);
       c.appendChild(el("span", { "class": "eca-org" }, "ECA"));
       c.appendChild(el("span", { "class": "eca-name" }, name));
-      var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect Claude");
+      var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect " + service);
       re.addEventListener("click", function () { location.assign("/_eca/connect"); });
       c.appendChild(re);
       var out = el("button", { type: "button", "aria-label": "Sign out of your agent on this browser" }, "Sign out");
@@ -201,11 +202,11 @@
     if (old) return;
     var b = el("div", { id: "eca-banner", role: "status" });
     var text = el("div");
-    var head = el("div"); head.appendChild(el("b", null, "One step left: connect your Claude account."));
+    var head = el("div"); head.appendChild(el("b", null, "One step left: connect your " + service + " account."));
     text.appendChild(head);
-    text.appendChild(el("div", { "class": "eca-sub" }, "Your agent runs on your own Claude membership. It takes about a minute."));
+    text.appendChild(el("div", { "class": "eca-sub" }, "Your agent runs on your own " + service + " membership. It takes about a minute."));
     var actions = el("div", { "class": "eca-actions" });
-    var go = el("button", { type: "button" }, "Connect Claude");
+    var go = el("button", { type: "button" }, "Connect " + service);
     go.addEventListener("click", function () { location.assign("/_eca/connect"); });
     var hide = el("button", { type: "button", "class": "eca-quiet" }, "Later");
     hide.addEventListener("click", function () { dismissed = true; banner(false); });
@@ -232,6 +233,7 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d) return;
+        if (d.service) service = d.service;
         chip(d.name, d.claude_signed_in);
         var needs = d.claude_signed_in === false;
         banner(needs);

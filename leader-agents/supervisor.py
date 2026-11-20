@@ -82,6 +82,11 @@ PLUGIN = "claude-subscription-directsdk"
 PLUGIN_REF = "72eb3b87215e98d11cecfb26ca95b86be73b32de"
 PROVIDER = "claude-subscription-directsdk-experimental"
 DEFAULT_MODEL = os.environ.get("ECA_DEFAULT_MODEL", "sonnet")
+# Leaders who use ChatGPT instead of Claude: their agent runs on OpenAI's own Codex program,
+# signed in to their ChatGPT plan by them (device code). Listed by employee number.
+CODEX = "/usr/local/bin/codex"
+CODEX_EMPLOYEES = {e.strip() for e in os.environ.get("ECA_CODEX_EMPLOYEES", "").split(",") if e.strip()}
+CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-5.4")
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
@@ -139,6 +144,14 @@ def save_state() -> None:
 
 # ───────────────────────────── linux accounts ─────────────────────────────
 
+def engine(a: dict) -> str:
+    return "codex" if str(a.get("employee_number")) in CODEX_EMPLOYEES else "claude"
+
+
+def service_name(a: dict) -> str:
+    return "ChatGPT" if engine(a) == "codex" else "Claude"
+
+
 def account_name(a: dict) -> str:
     return f"agent_{a['slug']}"
 
@@ -152,7 +165,7 @@ def user_env(a: dict) -> dict:
     name = account_name(a)
     return {
         "HOME": home, "USER": name, "LOGNAME": name, "SHELL": "/bin/bash",
-        "HERMES_HOME": f"{home}/.hermes", "PATH": AGENT_PATH,
+        "HERMES_HOME": f"{home}/.hermes", "CODEX_HOME": f"{home}/.codex", "PATH": AGENT_PATH,
         "TERM": "xterm-256color", "LANG": "C.UTF-8", "TZ": "America/Los_Angeles",
         "TMPDIR": str(RUN / "tmp" / a["slug"]),
         "XDG_RUNTIME_DIR": str(RUN / "rt" / a["slug"]),
@@ -293,10 +306,16 @@ def _config_text(a: dict, bare: bool) -> str:
             f"  port: {a['port']}\n")
     if bare:
         return text
-    return ("model:\n"
-            f"  provider: {PROVIDER}\n"
-            f"  default: {DEFAULT_MODEL}\n"
-            + text +
+    if engine(a) == "codex":
+        model = ("model:\n"
+                 "  provider: openai-codex\n"
+                 f"  default: {CODEX_MODEL}\n"
+                 "  openai_runtime: codex_app_server\n")
+    else:
+        model = ("model:\n"
+                 f"  provider: {PROVIDER}\n"
+                 f"  default: {DEFAULT_MODEL}\n")
+    return (model + text +
             "mcp_servers:\n"
             "  eca:\n"
             f"    url: {BACKEND}/api/intel/mcp\n"
@@ -317,7 +336,9 @@ def provision(a: dict, bare: bool = False) -> None:
                        {"op": "exists", "path": mark}, {"op": "exists", "path": plugin_dir}])
     cfg_text = got[0].get("text") or ""
     writes = []
-    if not a.get("provisioned") or f"port: {a['port']}" not in cfg_text or "enabled: true" not in cfg_text:
+    eng = "bare" if bare else engine(a)
+    if not a.get("provisioned") or f"port: {a['port']}" not in cfg_text or "enabled: true" not in cfg_text \
+            or a.get("engine", "claude") != eng:
         # First set-up, or the Webapp block was removed: without it the workspace cannot open.
         writes.append({"op": "write", "path": cfg, "content": _config_text(a, bare), "mode": 0o600})
     # The agent's standing brief. Written once, and refreshed when ECA's version of it changes,
@@ -345,14 +366,39 @@ def provision(a: dict, bare: bool = False) -> None:
         for res in home_ops(a, writes):
             if not res.get("ok"):
                 raise RuntimeError("could not write the workspace settings")
-    if not bare and not got[3].get("exists"):
+    if eng == "codex":
+        _codex_setup(a)
+    elif not bare and not got[3].get("exists"):
         run_as(a, [HERMES, "plugins", "install", PLUGIN, "--ref", PLUGIN_REF, "--yes-deps", "--enable"], timeout=300)
         if not home_ops(a, [{"op": "exists", "path": plugin_dir}])[0].get("exists"):
             raise RuntimeError("the Claude plugin did not install")
     a["provisioned"] = True
+    a["engine"] = eng
     if not bare:
         with _lock:
             save_state()
+
+
+def _codex_setup(a: dict) -> None:
+    """Codex reads its settings from its own folder, so the ECA data tools are
+    copied there by Hermes' own command, each start (it rewrites only its own
+    marked section). Codex does not expand ${...} in that file, so the token
+    reference is filled in from the leader's own .env, as the leader."""
+    home_ops(a, [{"op": "write", "path": ".codex/.eca", "content": "ECA\n", "mode": 0o600}])
+    r = run_as(a, [HERMES, "codex-runtime", "migrate"], timeout=180)
+    if r.returncode != 0:
+        raise RuntimeError("could not hand the ECA tools to ChatGPT")
+    got = home_ops(a, [{"op": "read", "path": ".codex/config.toml"}, {"op": "read", "path": ".hermes/.env"}])
+    toml, env = got[0].get("text") or "", got[1].get("text") or ""
+    if "${ECA_GATEWAY_TOKEN}" in toml:
+        token = next((ln.split("=", 1)[1].strip() for ln in env.splitlines()
+                      if ln.startswith("ECA_GATEWAY_TOKEN=")), "")
+        if not re.fullmatch(r"[A-Za-z0-9_\-.]{20,200}", token):
+            raise RuntimeError("the ECA data token is missing; open your agent from the portal again")
+        res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600,
+                            "content": toml.replace("${ECA_GATEWAY_TOKEN}", token)}])
+        if not res[0].get("ok"):
+            raise RuntimeError("could not write the ChatGPT settings")
 
 
 # ───────────────────────────── processes ─────────────────────────────
@@ -542,8 +588,13 @@ def claude_signed_in(a: dict):
     if hit and now - hit[0] < 10:
         return hit[1]
     try:
-        r = run_as(a, [CLAUDE, "auth", "status"], timeout=20)
-        value = bool(json.loads(r.stdout or "{}").get("loggedIn"))
+        if engine(a) == "codex":
+            r = run_as(a, [CODEX, "login", "status"], timeout=20)
+            out = (r.stdout or "") + (r.stderr or "")
+            value = r.returncode == 0 and "logged in" in out.lower() and "not logged in" not in out.lower()
+        else:
+            r = run_as(a, [CLAUDE, "auth", "status"], timeout=20)
+            value = bool(json.loads(r.stdout or "{}").get("loggedIn"))
     except Exception:
         value = None
     _claude_seen[a["slug"]] = (now, value)
@@ -567,7 +618,8 @@ class Connect:
         self.started = time.time()
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", CONNECT_ROWS, CONNECT_COLS, 0, 0))
-        self.proc = subprocess.Popen([CLAUDE, "auth", "login", "--claudeai"], stdin=slave, stdout=slave,
+        argv = [CODEX, "login", "--device-auth"] if engine(a) == "codex" else [CLAUDE, "auth", "login", "--claudeai"]
+        self.proc = subprocess.Popen(argv, stdin=slave, stdout=slave,
                                      stderr=slave, close_fds=True, **_drop(a))
         os.close(slave)
         self.master = master
@@ -754,8 +806,13 @@ def page(body: str, script: str = "") -> tuple:
 #  - a different person on the same browser starts from an empty store;
 #  - terminals remembered from before the agent last started are forgotten
 #    (they no longer exist, and the screen would only show an error for them).
-CONNECT_PAGE = (Path(__file__).resolve().parent / "pages" / "connect.html").read_text() \
-    if (Path(__file__).resolve().parent / "pages" / "connect.html").exists() else "__NAME__"
+def _read_page(name: str) -> str:
+    f = Path(__file__).resolve().parent / "pages" / name
+    return f.read_text() if f.exists() else "__NAME__"
+
+
+CONNECT_PAGE = _read_page("connect.html")
+CONNECT_PAGE_CODEX = _read_page("connect-codex.html")
 
 START_JS = """
 const OWNER=%(owner)s;
@@ -884,7 +941,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/_eca/whoami":
             if not s["confirmed"]:
                 return self._send(401)
-            return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a)})
+            # "claude_signed_in" is the sign-in to whichever AI service this leader uses.
+            return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a),
+                                    "service": service_name(a)})
         if path == "/_eca/connect":
             if not s["confirmed"]:
                 return self._send(302, headers={"Location": "/_eca/start"})
@@ -959,7 +1018,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._send(404, b"not found")
 
     def _connect_page(self, a):
-        doc = CONNECT_PAGE.replace("__NAME__", html.escape(self._name(a))) \
+        doc = (CONNECT_PAGE_CODEX if engine(a) == "codex" else CONNECT_PAGE).replace("__NAME__", html.escape(self._name(a))) \
             .replace("__COLS__", str(CONNECT_COLS)).replace("__ROWS__", str(CONNECT_ROWS))
         csp = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; "
                "font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")

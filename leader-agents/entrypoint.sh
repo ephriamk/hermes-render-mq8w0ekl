@@ -16,7 +16,6 @@ nginx -c /run/eca/nginx.conf -g 'daemon off;' &
 NGX=$!
 echo "[entrypoint] supervisor pid $SUP, nginx pid $NGX, port $PORT"
 
-if [ "${ECA_CODEX_PROBE:-}" = "1" ]; then ( sh /opt/eca/codex_probe.sh ) & fi
 
 # On shutdown the supervisor first lets every workspace close its files.
 trap 'kill -TERM "$SUP" 2>/dev/null; wait "$SUP" 2>/dev/null; kill "$NGX" 2>/dev/null; exit 0' TERM INT

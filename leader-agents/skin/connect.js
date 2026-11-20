@@ -8,7 +8,10 @@
   });
   term.open(document.getElementById("t"));
   var openBtn = document.getElementById("open"), wait = document.getElementById("wait"), msg = document.getElementById("msg");
-  var pasteBtn = document.getElementById("paste");
+  var pasteBtn = document.getElementById("paste") || { disabled: true, addEventListener: function () {} };
+  var codex = main.dataset.engine === "codex", codeEl = document.getElementById("code");
+  // Only the sign-in service's own addresses are ever opened from here.
+  var HOSTS = codex ? /(^|\.)(openai\.com|chatgpt\.com)$/ : /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/;
   var link = "", text = "", es = null, finished = false;
   var ESC = String.fromCharCode(27), BEL = String.fromCharCode(7);
   var OSC = new RegExp(ESC + "\\][^" + BEL + ESC + "]*(?:" + BEL + "|" + ESC + "\\\\)", "g");
@@ -17,14 +20,19 @@
   term.onData(function (d) { send(d); });
 
   function findLink() {
+    var plain = text.replace(OSC, "").replace(CSI, "");
+    if (codex && codeEl) {
+      // The one-time code OpenAI's program prints (letters and digits, with a dash).
+      var m = plain.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
+      if (m) codeEl.textContent = m[1];
+    }
     if (link) return;
-    var found = text.replace(OSC, "").replace(CSI, "").match(/https:\/\/[^\s"'<>]+/g) || [];
+    var found = plain.match(/https:\/\/[^\s"'<>]+/g) || [];
     for (var i = 0; i < found.length; i++) {
       try {
         var host = new URL(found[i]).hostname;
-        // Only Anthropic's own addresses are ever opened from here.
-        if (/(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/.test(host)) {
-          link = found[i]; openBtn.disabled = false; wait.textContent = "Opens in a new tab."; return;
+        if (HOSTS.test(host)) {
+          link = found[i]; openBtn.disabled = false; wait.textContent = codex ? "" : "Opens in a new tab."; return;
         }
       } catch (e) {}
     }
@@ -69,7 +77,8 @@
   // fresh: start a new sign-in even if one is running (used after one has ended).
   function begin(fresh) {
     msg.textContent = ""; link = ""; text = ""; openBtn.disabled = true; pasteBtn.disabled = true;
-    wait.textContent = "Getting your link…";
+    wait.textContent = codex ? "Getting your code…" : "Getting your link…";
+    if (codeEl) codeEl.textContent = "…";
     term.reset();
     return fetch("/_eca/connect/start", { method: "POST", credentials: "same-origin", body: fresh ? "fresh" : "" }).then(function (r) {
       if (!r.ok) { msg.textContent = "Could not start the sign-in. Reload this page to try again."; return null; }
