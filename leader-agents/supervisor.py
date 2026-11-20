@@ -584,6 +584,41 @@ def mint_launch_path(a: dict) -> str:
     return m.group(2)
 
 
+# Runs AS THE LEADER: copies the ChatGPT program's sign-in (CODEX_HOME/auth.json) into the
+# engine's own store, the same import the engine's setup offers ("Import these
+# credentials? y"). Never prints a token.
+CODEX_HANDOVER = r'''
+import sys
+sys.path.insert(0, "/opt/hermes")
+from hermes_cli.auth import _import_codex_cli_tokens, _read_codex_tokens, _save_codex_tokens
+try:
+    _read_codex_tokens()
+    print("engine-has-it")
+except Exception:
+    t = _import_codex_cli_tokens()
+    if not t:
+        print("program-not-signed-in")
+    else:
+        _save_codex_tokens(t)
+        print("copied")
+'''
+_handed_over: dict = {}   # slug -> time the engine was confirmed to hold the sign-in
+
+
+def codex_handover(a: dict) -> None:
+    if time.time() - _handed_over.get(a["slug"], 0) < 300:
+        return
+    try:
+        r = run_as(a, [PY, "-I", "-c", CODEX_HANDOVER], timeout=60)
+        result = (r.stdout or "").strip().splitlines()[-1:] or ["?"]
+        if result[0] in ("engine-has-it", "copied"):
+            _handed_over[a["slug"]] = time.time()
+        if result[0] != "engine-has-it":
+            log(f"{a['slug']}: ChatGPT sign-in hand-over: {result[0]} {(r.stderr or '').strip()[-120:]}")
+    except Exception as exc:
+        log(f"{a['slug']}: ChatGPT sign-in hand-over failed ({type(exc).__name__})")
+
+
 _claude_seen: dict = {}   # slug -> (checked at, signed in?)
 
 
@@ -599,6 +634,8 @@ def claude_signed_in(a: dict):
             r = run_as(a, [CODEX, "login", "status"], timeout=20)
             out = (r.stdout or "") + (r.stderr or "")
             value = r.returncode == 0 and "logged in" in out.lower() and "not logged in" not in out.lower()
+            if value:
+                codex_handover(a)
             if not value:
                 log(f"{a['slug']}: ChatGPT not signed in (codex login status rc={r.returncode}: {out.strip()[:80]!r})")
         else:
