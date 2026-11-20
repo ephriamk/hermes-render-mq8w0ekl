@@ -1105,7 +1105,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         doc = (CONNECT_PAGE_CODEX if engine(a) == "codex" else CONNECT_PAGE).replace("__NAME__", html.escape(self._name(a))) \
             .replace("__COLS__", str(CONNECT_COLS)).replace("__ROWS__", str(CONNECT_ROWS))
         csp = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; "
-               "font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+               "img-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self._send(200, doc.encode(), "text/html; charset=utf-8", {"Content-Security-Policy": csp})
 
     def _connect_stream(self, a):

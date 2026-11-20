@@ -1,97 +1,132 @@
-// "Connect Claude": shows Claude's own sign-in program in a terminal box and
-// carries keystrokes to it. Nothing here reads or keeps what is typed.
+// "Connect Claude" / "Connect ChatGPT": shows the service's own sign-in program in a
+// terminal box (folded away unless needed) and carries keystrokes to it. Nothing here
+// reads or keeps what is typed; the one-time code is only copied for the person.
 (function () {
   var main = document.querySelector("main");
+  var codex = main.dataset.engine === "codex";
+  var $ = function (id) { return document.getElementById(id); };
+  var openBtn = $("open"), pasteBtn = $("paste"), copyBtn = $("copy"), codeEl = $("code");
+  var wait = $("wait"), msg = $("msg"), prog = $("prog");
+
+  // Initials for the person chip.
+  (function () {
+    var parts = ($("who").textContent || "").replace(/,/g, " ").trim().split(/\s+/);
+    $("av").textContent = (((parts[0] || "")[0] || "") + ((parts.length > 1 ? parts[parts.length - 1][0] : "") || "")).toUpperCase();
+  })();
+
   var term = new Terminal({
     cols: Number(main.dataset.cols), rows: Number(main.dataset.rows), fontSize: 13, cursorBlink: true,
-    scrollback: 200, theme: { background: "#000000", foreground: "#e6f4ec", cursor: "#34d399" }
+    scrollback: 200, theme: { background: "#000000", foreground: "#e6f4ec", cursor: "#7ed957" }
   });
-  term.open(document.getElementById("t"));
-  var openBtn = document.getElementById("open"), wait = document.getElementById("wait"), msg = document.getElementById("msg");
-  var pasteBtn = document.getElementById("paste") || { disabled: true, addEventListener: function () {} };
-  var codex = main.dataset.engine === "codex", codeEl = document.getElementById("code");
+  term.open($("t"));
+  term.onData(function (d) { send(d); });
+
   // Only the sign-in service's own addresses are ever opened from here.
   var HOSTS = codex ? /(^|\.)(openai\.com|chatgpt\.com)$/ : /(^|\.)(claude\.ai|claude\.com|anthropic\.com)$/;
-  var link = "", text = "", es = null, finished = false;
+  var link = "", code = "", text = "", es = null, finished = false;
   var ESC = String.fromCharCode(27), BEL = String.fromCharCode(7);
   var OSC = new RegExp(ESC + "\\][^" + BEL + ESC + "]*(?:" + BEL + "|" + ESC + "\\\\)", "g");
   var CSI = new RegExp(ESC + "\\[[0-9;?]*[ -/]*[@-~]", "g");
 
-  term.onData(function (d) { send(d); });
-
-  function findLink() {
-    var plain = text.replace(OSC, "").replace(CSI, "");
-    if (codex && codeEl) {
-      // The one-time code OpenAI's program prints (letters and digits, with a dash).
-      var m = plain.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
-      if (m) codeEl.textContent = m[1];
+  function step(n, waiting) {
+    for (var i = 1; i <= 3; i++) {
+      var s = $("s" + i);
+      s.classList.toggle("done", i < n);
+      s.classList.toggle("active", i === n);
+      s.classList.toggle("waiting", i === n && !!waiting);
     }
-    if (link) return;
-    var found = plain.match(/https:\/\/[^\s"'<>]+/g) || [];
-    for (var i = 0; i < found.length; i++) {
-      try {
-        var host = new URL(found[i]).hostname;
-        if (HOSTS.test(host)) {
-          link = found[i]; openBtn.disabled = false; wait.textContent = codex ? "" : "Opens in a new tab."; return;
-        }
-      } catch (e) {}
+  }
+  function showCode(c) {
+    codeEl.textContent = "";
+    for (var i = 0; i < c.length; i++) {
+      var sp = document.createElement("span");
+      if (c[i] === "-") sp.className = "dash";
+      sp.textContent = c[i];
+      codeEl.appendChild(sp);
     }
   }
   function send(d) {
     return fetch("/_eca/connect/input", { method: "POST", credentials: "same-origin", body: d }).catch(function () {});
   }
+
+  function scan() {
+    var plain = text.replace(OSC, "").replace(CSI, "");
+    if (codex && !code) {
+      var m = plain.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
+      if (m) { code = m[1]; showCode(code); copyBtn.disabled = false; }
+    }
+    if (!link) {
+      var found = plain.match(/https:\/\/[^\s"'<>]+/g) || [];
+      for (var i = 0; i < found.length; i++) {
+        try { if (HOSTS.test(new URL(found[i]).hostname)) { link = found[i]; break; } } catch (e) {}
+      }
+      if (link) openBtn.disabled = false;
+    }
+    if (codex) {
+      if (code && link && $("s1").classList.contains("active")) { wait.textContent = "Ready. Copy it, then go to step 2."; step(1); }
+    } else if (link && $("s1").classList.contains("waiting")) {
+      wait.textContent = "Opens in a new tab."; step(1);
+    }
+  }
+
+  if (copyBtn) copyBtn.addEventListener("click", function () {
+    if (!code) return;
+    var done = function () { copyBtn.textContent = "Copied ✓"; step(2); setTimeout(function () { copyBtn.textContent = "Copy"; }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(done, done);
+    else done();
+  });
+
   openBtn.addEventListener("click", function () {
     if (!link) return;
     window.open(link, "_blank", "noopener,noreferrer");
-    pasteBtn.disabled = false;
-    term.focus();
+    if (codex) step(3, true);
+    else { pasteBtn.disabled = false; step(2, true); }
+    if (!codex) term.focus();
   });
-  // Types what is on the clipboard into Claude's program, exactly as a paste in
-  // the box would, then presses Enter. The code is not kept anywhere here.
-  pasteBtn.addEventListener("click", function () {
+
+  if (pasteBtn) pasteBtn.addEventListener("click", function () {
     msg.textContent = "";
-    if (!navigator.clipboard || !navigator.clipboard.readText) {
-      msg.textContent = "Click inside the box below, paste the code and press Enter."; term.focus(); return;
-    }
-    navigator.clipboard.readText().then(function (code) {
-      code = (code || "").trim();
-      if (!code || code.length > 600 || /\s/.test(code)) {
-        msg.textContent = "That does not look like the code. Press Copy on Claude's page, then try again."; return;
+    var manual = function (why) {
+      msg.textContent = why + " Open the box below, click inside it, paste (Ctrl+V or ⌘V) and press Enter.";
+      prog.open = true; term.focus();
+    };
+    if (!navigator.clipboard || !navigator.clipboard.readText) return manual("This browser can't read the clipboard from here.");
+    navigator.clipboard.readText().then(function (c) {
+      c = (c || "").trim();
+      if (!c || c.length > 600 || /\s/.test(c)) {
+        msg.textContent = "That doesn't look like Claude's code. Press Copy on Claude's page, then try again."; return;
       }
-      send(code + "\r"); term.focus();
-    }).catch(function () {
-      msg.textContent = "Your browser did not allow reading the clipboard. Click inside the box below, paste the code and press Enter.";
-      term.focus();
-    });
+      send(c + "\r"); step(3, true);
+    }).catch(function () { manual("Your browser didn't allow reading the clipboard."); });
   });
-  window.addEventListener("focus", function () { if (!finished) term.focus(); });
 
   function feed(b64) {
     var bin = atob(b64), bytes = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     term.write(bytes);
     text = (text + new TextDecoder().decode(bytes)).slice(-20000);
-    findLink();
+    scan();
   }
 
   // fresh: start a new sign-in even if one is running (used after one has ended).
   function begin(fresh) {
-    msg.textContent = ""; link = ""; text = ""; openBtn.disabled = true; pasteBtn.disabled = true;
+    msg.textContent = ""; link = ""; code = ""; text = "";
+    openBtn.disabled = true; if (pasteBtn) pasteBtn.disabled = true; if (copyBtn) copyBtn.disabled = true;
+    if (codeEl) codeEl.innerHTML = '<div class="skeleton"></div>';
     wait.textContent = codex ? "Getting your code…" : "Getting your link…";
-    if (codeEl) codeEl.textContent = "…";
+    step(1, true);
     term.reset();
     return fetch("/_eca/connect/start", { method: "POST", credentials: "same-origin", body: fresh ? "fresh" : "" }).then(function (r) {
       if (!r.ok) { msg.textContent = "Could not start the sign-in. Reload this page to try again."; return null; }
       return r.json();
     }).then(function (d) {
       if (!d) return;
-      // Coming back to a sign-in already under way: the code can be pasted straight away.
-      if (d.resumed) pasteBtn.disabled = false;
+      // Coming back to a Claude sign-in already under way: the code can be pasted straight away.
+      if (d.resumed && pasteBtn) pasteBtn.disabled = false;
       if (es) es.close();
       es = new EventSource("/_eca/connect/stream");
       es.onmessage = function (e) { feed(e.data); };
       es.addEventListener("end", function () { es.close(); if (!finished) check(true); });
-      term.focus();
     });
   }
 
@@ -104,14 +139,13 @@
       if (!d) return;
       if (d.claude_signed_in === true) {
         finished = true; if (es) es.close();
-        document.getElementById("steps").style.display = "none";
-        document.getElementById("ok").style.display = "block";
-        setTimeout(function () { location.replace("/_eca/open"); }, 1200);
+        main.classList.add("finished");
+        setTimeout(function () { location.replace("/_eca/open"); }, 1400);
         return;
       }
       if (ended) {
         if (++restarts > 3) { msg.textContent = "The sign-in keeps closing. Reload this page to try again."; return; }
-        msg.textContent = "The sign-in closed before it finished. Starting it again…";
+        msg.textContent = "The sign-in closed before it finished. Starting a fresh one…";
         setTimeout(function () { begin(true); }, 1500);
         return;
       }
