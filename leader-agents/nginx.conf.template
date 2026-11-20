@@ -27,6 +27,10 @@ http {
     server_name _;
     absolute_redirect off;        # the public address is the host's, not this port
 
+    # A workspace page must never register a service worker: on the one address all leaders
+    # share, it could outlive a sign-out and read the next person's pages.
+    if ($http_service_worker) { return 403; }
+
     location = /_eca/health      { default_type text/plain; return 200 "ok"; }
 
     location = /_auth {

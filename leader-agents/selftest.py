@@ -116,6 +116,16 @@ def run(sup) -> None:
         ):
             check(sh(B, cmd).returncode != 0, what)
 
+        # ── nothing a leader can change is run by root ──
+        r = sh(B, "find /opt/hermes /opt/eca /opt/eca-vendor /usr/local /usr/bin /usr/sbin /etc /run/eca/a "
+                  "-xdev -writable 2>/dev/null | head -5")
+        check(not r.stdout.strip(), "B can write nothing in the program folders, /etc or the relay folders"
+              + (f" (found: {r.stdout.split()[:3]})" if r.stdout.strip() else ""))
+        check(sh(B, f"ln -sf {sup.RUN}/a/zztb/web.sock {sup.RUN}/a/zzta/web.sock").returncode != 0,
+              "B cannot replace A's relay socket")
+        check(sh(A, f"ln -sf /tmp/x {sup.RUN}/a/zzta/web.sock").returncode != 0,
+              "A cannot replace its own relay socket either (root-owned folder)")
+
         # ── processes ──
         check(sh(B, f"cat /proc/{gw}/environ").returncode != 0, "B cannot read the environment of A's agent")
         check(sh(B, f"ls /proc/{gw}/cwd/").returncode != 0, "B cannot look into A's agent's working folder")

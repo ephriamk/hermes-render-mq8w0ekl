@@ -78,6 +78,8 @@ HERMES = "/opt/hermes/bin/hermes"
 PY = "/opt/hermes/.venv/bin/python"
 CLAUDE = "/usr/local/bin/claude"
 PLUGIN = "claude-subscription-directsdk"
+# Exact reviewed version of the Claude plugin (it handles Claude sign-ins): never "latest".
+PLUGIN_REF = "72eb3b87215e98d11cecfb26ca95b86be73b32de"
 PROVIDER = "claude-subscription-directsdk-experimental"
 DEFAULT_MODEL = os.environ.get("ECA_DEFAULT_MODEL", "sonnet")
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -193,10 +195,14 @@ def ensure_account(a: dict) -> None:
     home.mkdir(parents=True, exist_ok=True)
     os.chown(home, uid, uid, follow_symlinks=False)
     os.chmod(home, 0o700)
-    for sub, mode, gid in (("rt", 0o700, uid), ("tmp", 0o700, uid), ("a", 0o750, WEB_GID)):
+    # rt and tmp belong to the leader. The relay folder belongs to root (only nginx may
+    # enter it), so a leader cannot swap their relay socket for a link to someone else's.
+    for sub, mode, owner, gid in (("rt", 0o700, uid, uid), ("tmp", 0o700, uid, uid), ("a", 0o750, 0, WEB_GID)):
         d = RUN / sub / a["slug"]
+        if d.is_symlink():
+            d.unlink()
         d.mkdir(parents=True, exist_ok=True)
-        os.chown(d, uid, gid, follow_symlinks=False)
+        os.chown(d, owner, gid, follow_symlinks=False)
         os.chmod(d, mode)
 
 
@@ -336,7 +342,7 @@ def provision(a: dict, bare: bool = False) -> None:
             if not res.get("ok"):
                 raise RuntimeError("could not write the workspace settings")
     if not bare and not got[3].get("exists"):
-        run_as(a, [HERMES, "plugins", "install", PLUGIN, "--yes-deps", "--enable"], timeout=300)
+        run_as(a, [HERMES, "plugins", "install", PLUGIN, "--ref", PLUGIN_REF, "--yes-deps", "--enable"], timeout=300)
         if not home_ops(a, [{"op": "exists", "path": plugin_dir}])[0].get("exists"):
             raise RuntimeError("the Claude plugin did not install")
     a["provisioned"] = True
@@ -360,7 +366,7 @@ def _spawn(a: dict, argv: list, label: str, quiet: bool = False, limited: bool =
     if limited:
         # Root sets the process limit, then gives up its powers for good. The limit is counted
         # against the leader's account, so one runaway job cannot take the whole server.
-        argv = ["prlimit", f"--nproc={MAX_PROCESSES}", "--", "setpriv", f"--reuid={a['uid']}",
+        argv = ["/usr/bin/prlimit", f"--nproc={MAX_PROCESSES}", "--", "/usr/bin/setpriv", f"--reuid={a['uid']}",
                 f"--regid={a['uid']}", "--clear-groups", "--"] + argv
         for k in ("user", "group", "extra_groups"):
             kw.pop(k)
@@ -416,13 +422,28 @@ def start_agent(a: dict, bare: bool = False) -> None:
         sock = RUN / "a" / slug / "web.sock"
         if not _alive(rt.get("relay")):
             # The relay output is discarded: it must never carry anyone's traffic into the log.
-            rt["relay"] = _spawn(a, ["socat", "-d0", f"UNIX-LISTEN:{sock},fork,mode=666,unlink-early",
-                                     f"TCP:127.0.0.1:{a['port']}"], "relay", quiet=True)
+            # Root creates the socket in the root-owned folder (readable by nginx only), then
+            # socat switches to the leader's account, so the workspace sees a connection from
+            # its own account. The output is discarded: it must never carry traffic into the log.
+            rt["relay"] = subprocess.Popen(
+                ["/usr/bin/socat", "-d0",
+                 f"UNIX-LISTEN:{sock},fork,unlink-early,user=root,group=www-data,mode=660,su={account_name(a)}",
+                 f"TCP:127.0.0.1:{a['port']}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin"}, cwd="/", start_new_session=True)
         rt["detail"] = "Starting your agent"
         owner = listener_uid(a["port"])
         if owner is not None and owner != a["uid"]:
             log(f"{slug}: port {a['port']} is held by uid {owner}; refusing to route there")
-            raise RuntimeError("the workspace port is held by another account")
+            if owner >= FIRST_UID and not bare:
+                # Another leader's account took this port: end that account's processes (asked as
+                # that account, the only way this host allows) so the rightful workspace can start.
+                subprocess.run(["/usr/bin/pkill", "-KILL", "-U", str(owner)], user=owner, group=owner,
+                               extra_groups=[], env={"PATH": "/usr/bin:/bin"}, capture_output=True)
+                time.sleep(1.5)
+                owner = listener_uid(a["port"])
+            if owner is not None and owner != a["uid"]:
+                raise RuntimeError("the workspace port is held by another account")
         if webapp_state(a["port"]) == "down":
             if not _alive(rt.get("gateway")):
                 rt["gateway"] = _spawn(a, [HERMES, "gateway", "run", "--quiet", "--no-supervise",
@@ -484,8 +505,10 @@ def ensure_agent(identity: dict) -> dict:
                     start_agent(a)
                 threading.Thread(target=_restart, daemon=True).start()
                 return a
-        healthy = rt.get("status") == "ready" and webapp_state(a["port"]) == "ready"
-        if not healthy and rt.get("status") != "starting":
+    # Probe outside the shared lock: one slow workspace must never hold up anyone else.
+    healthy = rt.get("status") == "ready" and webapp_state(a["port"]) == "ready"
+    with _lock:
+        if not healthy and rt.get("status") not in ("starting", "restarting"):
             rt.update(status="starting", detail="Preparing your workspace")
             threading.Thread(target=start_agent, args=(a,), daemon=True).start()
     return a
@@ -823,7 +846,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/_eca/health":
             return self._send(200, b"ok")
         if path == "/enter":
-            return self._enter(parse_qs(url.query).get("ticket", [""])[0])
+            return self._enter(parse_qs(url.query).get("ticket", [""])[0], confirmed=False)
         if path == "/_eca/signed-out":
             return self._signed_out(auto="bye" not in parse_qs(url.query))
         s = self._session()
@@ -885,6 +908,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         length = min(int(self.headers.get("Content-Length") or 0), 8192)
         raw = self.rfile.read(length) if length else b""
+        if path == "/enter":
+            # The portal sends the ticket as a form from its own page. The browser's Origin
+            # header cannot be faked by another website, so only this path signs in confirmed.
+            origin = (self.headers.get("Origin") or "").rstrip("/")
+            ticket = parse_qs(raw.decode("utf-8", "replace")).get("ticket", [""])[0]
+            return self._enter(ticket, confirmed=origin in PORTAL_ORIGINS)
         s = self._session()
         if s is None:
             return self._send(401, b"signed out")
@@ -975,7 +1004,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 f'<a class=btn href="{html.escape(go)}" rel="noreferrer">Open from the portal</a>')
         self._page(200, body, SIGNED_OUT_JS % {"go": json.dumps(go), "auto": "true" if auto else "false"})
 
-    def _enter(self, ticket: str):
+    def _enter(self, ticket: str, confirmed: bool):
         # The ticket says who it is only once redeemed, so tell the backend whose fresh
         # tokens this server already holds; it issues one only if the ticket's own person
         # is not among them (retiring that person's earlier token).
@@ -989,8 +1018,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             log(f"could not prepare a workspace: {exc}")
             return self._page(500, "<h1>Could not prepare your workspace</h1><p>Please tell Ephriam.</p>")
-        referer = self.headers.get("Referer") or ""
-        origin = "{0.scheme}://{0.netloc}".format(urlsplit(referer)) if referer else ""
         previous = self._session()
         value = secrets.token_urlsafe(40)
         with _lock:
@@ -998,14 +1025,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if old:
                 _sessions.pop(_h(old), None)
             _sessions[_h(value)] = {"emp": emp, "expires": time.time() + SESSION_HOURS * 3600,
-                                    # A link followed from anywhere but the portal asks first, so nobody
-                                    # can be dropped into someone else's workspace by a pasted link.
-                                    "confirmed": origin in PORTAL_ORIGINS}
+                                    # Only a form sent from the portal itself counts as confirmed. A link
+                                    # (GET), from anywhere, asks first and names the person, so nobody can
+                                    # be dropped into someone else's workspace by a link.
+                                    "confirmed": confirmed}
         log(f"{a['slug']}: signed in from the portal")
         headers = {"Location": "/_eca/start",
                    "Set-Cookie": f"{COOKIE}={value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}"}
-        if previous is not None and previous["emp"] != emp:
-            headers["Clear-Site-Data"] = '"storage"'     # another person was signed in on this browser
+        if previous is None or previous["emp"] != emp:
+            headers["Clear-Site-Data"] = '"storage"'     # a fresh sign-in, or another person on this browser
         self._send(303, headers=headers)
 
     def _auth(self):

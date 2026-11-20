@@ -7,7 +7,8 @@ if [ "$(id -u)" != 0 ]; then echo "[entrypoint] must start as root (it creates o
 mkdir -p /run/eca /srv/eca
 sed "s/__PORT__/${PORT}/" /opt/eca/nginx.conf.template > /run/eca/nginx.conf
 
-/opt/hermes/.venv/bin/python -u /opt/eca/supervisor.py &
+# -I: the root supervisor ignores PYTHON* settings and the user site folder.
+/opt/hermes/.venv/bin/python -I -u /opt/eca/supervisor.py &
 SUP=$!
 i=0
 while [ $i -lt 60 ] && [ ! -S /run/eca/sup/sup.sock ]; do i=$((i+1)); sleep 0.5; done

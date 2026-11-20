@@ -31,6 +31,7 @@ RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf
 
+ENV ECA_SELFTEST=1
 # The separation self-test (selftest.py) runs at start when ECA_SELFTEST=1 is set
 # on the service. It passed in full on 2026-11-19; run it again after any change
 # to how accounts, homes or routing work.
