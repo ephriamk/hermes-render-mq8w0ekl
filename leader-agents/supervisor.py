@@ -92,6 +92,10 @@ COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
 FIRST_UID, FIRST_PORT = 20001, 9201
 MAX_PROCESSES = "4096"          # per account: stops a runaway job taking the whole server
+# Per-person limits (lockdown plan step 7): over them, only that person's agent stops.
+MEMORY_LIMIT_MB = int(os.environ.get("ECA_MEMORY_LIMIT_MB", "700") or 0)
+DISK_LIMIT_MB = int(os.environ.get("ECA_DISK_LIMIT_MB", "1536") or 0)
+DISK_ALERT_PCT = 80
 try:
     WEB_GID = pwd.getpwnam("www-data").pw_gid
 except KeyError:                # not on the server image (tests)
@@ -510,7 +514,7 @@ def start_agent(a: dict, bare: bool = False) -> None:
             raise RuntimeError("the agent did not come up in time")
         if listener_uid(a["port"]) != a["uid"]:
             raise RuntimeError("the workspace port is held by another account")
-        rt.update(status="ready", detail="", last_seen=time.time(), epoch=int(time.time()))
+        rt.update(status="ready", detail="", notice="", last_seen=time.time(), epoch=int(time.time()))
         log(f"{slug}: ready on port {a['port']}")
     except Exception as exc:
         log(f"{slug}: start failed: {exc}")
@@ -753,6 +757,79 @@ def keeper() -> None:
                 stop_agent(a)
 
 
+def memory_mb(uid: int) -> float:
+    """Resident memory of every process of one account, from /proc (no signals, no files
+    of theirs read)."""
+    total_kb = 0
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/status") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m_uid = re.search(r"^Uid:\s+(\d+)", text, re.M)
+        if not m_uid or int(m_uid.group(1)) != uid:
+            continue
+        m_rss = re.search(r"^VmRSS:\s+(\d+)\s+kB", text, re.M)
+        if m_rss:
+            total_kb += int(m_rss.group(1))
+    return total_kb / 1024
+
+
+def disk_mb(a: dict):
+    """Size of a leader's home, measured AS the leader (root never walks their files)."""
+    try:
+        r = run_as(a, ["/usr/bin/du", "-sxk", str(home_of(a))], timeout=120)
+        return int((r.stdout or "0").split()[0]) / 1024
+    except Exception:
+        return None
+
+
+def limits() -> None:
+    """Every 30 s: memory per person; every 5 min: disk per person and the shared disk."""
+    last_disk = 0.0
+    while not _stopping.is_set():
+        time.sleep(30)
+        with _lock:
+            agents = [a for a in _state["agents"].values()]
+        check_disk = time.time() - last_disk > 300
+        if check_disk:
+            last_disk = time.time()
+            try:
+                st = os.statvfs(str(DATA))
+                used = 100 * (1 - st.f_bavail / st.f_blocks)
+                if used >= DISK_ALERT_PCT:
+                    log(f"ALERT shared disk {used:.0f}% full")
+            except OSError:
+                pass
+        for a in agents:
+            rt = _runtime.get(a["slug"]) or {}
+            if rt.get("status") != "ready":
+                continue
+            reason = None
+            if MEMORY_LIMIT_MB:
+                mb = memory_mb(a["uid"])
+                if check_disk:
+                    log(f"{a['slug']}: using {mb:.0f} MB of memory")
+                if mb > MEMORY_LIMIT_MB:
+                    reason = f"used {mb:.0f} MB of memory (limit {MEMORY_LIMIT_MB} MB)"
+            if reason is None and check_disk and DISK_LIMIT_MB:
+                mb = disk_mb(a)
+                if mb is not None and mb > DISK_LIMIT_MB:
+                    # At most once an hour, so the person can open it again and clean up.
+                    if time.time() - rt.get("disk_stop", 0) > 3600:
+                        rt["disk_stop"] = time.time()
+                        reason = f"workspace holds {mb:.0f} MB (limit {DISK_LIMIT_MB} MB)"
+                    else:
+                        log(f"{a['slug']}: workspace over its disk limit ({mb:.0f} MB)")
+            if reason:
+                log(f"{a['slug']}: stopped: {reason}")
+                stop_agent(a)
+                rt["notice"] = f"Your agent was stopped because it {reason}. Open it again to continue."
+
+
 # ───────────────────────────── backend ─────────────────────────────
 
 def redeem_ticket(ticket: str, want_token: bool = False):
@@ -936,7 +1013,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/_eca/status":
             rt = _runtime.get(a["slug"]) or {}
             state = rt.get("status", "new") if s["confirmed"] else "unconfirmed"
-            return self._json(200, {"state": state, "detail": rt.get("detail", ""), "epoch": rt.get("epoch", 0),
+            return self._json(200, {"state": state, "detail": rt.get("notice") or rt.get("detail", ""),
+                                    "epoch": rt.get("epoch", 0),
                                     "claude": claude_signed_in(a) if state == "ready" else None})
         if path == "/_eca/whoami":
             if not s["confirmed"]:
@@ -1167,6 +1245,7 @@ def main() -> None:
     server = make_server()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=keeper, daemon=True).start()
+    threading.Thread(target=limits, daemon=True).start()
     log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; data in {DATA}"
         f"{' (on its own disk)' if os.path.ismount(DATA) else ' (NOT on a disk: lost at restart)'}")
     if SELFTEST:
