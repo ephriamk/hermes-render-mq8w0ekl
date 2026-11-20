@@ -153,7 +153,7 @@ def user_env(a: dict) -> dict:
     return {
         "HOME": home, "USER": name, "LOGNAME": name, "SHELL": "/bin/bash",
         "HERMES_HOME": f"{home}/.hermes", "PATH": AGENT_PATH,
-        "TERM": "xterm-256color", "LANG": "C.UTF-8",
+        "TERM": "xterm-256color", "LANG": "C.UTF-8", "TZ": "America/Los_Angeles",
         "TMPDIR": str(RUN / "tmp" / a["slug"]),
         "XDG_RUNTIME_DIR": str(RUN / "rt" / a["slug"]),
         "HERMES_PYTHON": PY,
@@ -266,6 +266,10 @@ workspace, build reports and files, and schedule recurring work.
 - Never estimate or invent a number an ECA tool did not return. If the tools
   cannot answer, say so plainly.
 - Say which club and which dates a number covers.
+- ECA runs on Pacific time (Seattle). "Today" means today's Pacific date; check
+  it with `eca_whoami` (today_pacific). The dashboard's normal business date is
+  yesterday: today's figures are partial until tonight's data load, so when
+  asked about "today" say so and give yesterday's complete numbers too.
 - Pay: `eca_my_pay` is {name}'s own pay. `eca_club_pay` is the team pay their
   portal shows them, if any. Pay is confidential: keep it out of anything meant
   for other people unless {name} asks for that.

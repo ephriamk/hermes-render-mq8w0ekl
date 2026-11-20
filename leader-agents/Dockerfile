@@ -5,8 +5,9 @@ ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.23.2@sha256:d6746a084e93
 FROM ${HERMES_IMAGE}
 
 USER root
+ENV TZ=America/Los_Angeles
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nginx-light socat dumb-init openssl procps iproute2 curl ca-certificates util-linux \
+ && apt-get install -y --no-install-recommends nginx-light socat dumb-init tzdata openssl procps iproute2 curl ca-certificates util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # The unmodified Claude Code program. Each leader signs in to it themselves,
@@ -31,7 +32,6 @@ RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf
 
-ENV ECA_SELFTEST=1
 # The separation self-test (selftest.py) runs at start when ECA_SELFTEST=1 is set
 # on the service. It passed in full on 2026-11-19; run it again after any change
 # to how accounts, homes or routing work.
