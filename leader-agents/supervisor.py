@@ -296,7 +296,7 @@ def start_agent(a: dict) -> None:
         provision(a)
         sock = RUN / "a" / slug / "web.sock"
         if not _alive(rt.get("relay")):
-            rt["relay"] = _spawn(a, ["socat", f"UNIX-LISTEN:{sock},fork,mode=666,unlink-early",
+            rt["relay"] = _spawn(a, ["socat", "-d0", f"UNIX-LISTEN:{sock},fork,mode=666,unlink-early",
                                      f"TCP:127.0.0.1:{a['port']}"], "relay")
         rt["detail"] = "Starting your agent"
         owner = listener_uid(a["port"])
@@ -359,6 +359,25 @@ def mint_launch_path(a: dict) -> str:
         tail = re.sub(r"ticket=\S+", "ticket=<hidden>", (r.stdout or "") + (r.stderr or ""))[-300:]
         raise RuntimeError(f"no launch link from the gateway: {tail}")
     return m.group(1)
+
+
+_claude_seen: dict = {}   # slug -> (checked at, signed in?)
+
+
+def claude_signed_in(a: dict):
+    """Whether the leader has signed in to Claude in their workspace. Asks the
+    Claude program itself (a local check); never reads its login files."""
+    now = time.time()
+    hit = _claude_seen.get(a["slug"])
+    if hit and now - hit[0] < 10:
+        return hit[1]
+    try:
+        r = run_as(a, ["/usr/local/bin/claude", "auth", "status"], timeout=20)
+        value = bool(json.loads(r.stdout or "{}").get("loggedIn"))
+    except Exception:
+        value = None
+    _claude_seen[a["slug"]] = (now, value)
+    return value
 
 
 def stop_agent(a: dict) -> None:
@@ -532,6 +551,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rt = _runtime.get(a["slug"]) or {}
             return self._json(200, {"state": rt.get("status", "new") if s["confirmed"] else "unconfirmed",
                                     "detail": rt.get("detail", "")})
+        if path == "/_eca/whoami":
+            if not s["confirmed"]:
+                return self._send(401)
+            raw = a.get("name") or a.get("username") or ""
+            if "," in raw:
+                raw = " ".join(p.strip() for p in reversed(raw.split(",", 1)))
+            return self._json(200, {"name": raw, "claude_signed_in": claude_signed_in(a)})
         if path == "/_eca/open":
             if not s["confirmed"]:
                 return self._send(302, headers={"Location": "/_eca/start"})

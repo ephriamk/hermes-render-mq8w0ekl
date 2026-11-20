@@ -1,3 +1,53 @@
-/* ECA look for the workspace. Kept small on purpose; grown once the real
-   screens have been seen. */
-:root { --eca-accent: #10b981; }
+/* ECA look for the agent workspace.
+   The workspace sets its theme as inline variables on <html>, so these need
+   !important to win. Colours follow the ECA portal: near-black green with an
+   emerald accent. */
+html {
+  --theme-primary: #10b981 !important;
+  --theme-midground: #10b981 !important;
+  --theme-warm: #34d399 !important;
+  --theme-secondary: #12382b !important;
+  --theme-accent-soft: #0f2a21 !important;
+  --theme-background-seed: #08130f !important;
+  --theme-sidebar-seed: #040b08 !important;
+  --theme-card-seed: #050d0a !important;
+  --theme-elevated-seed: #0e1f18 !important;
+  --theme-bubble-seed: #0a2219 !important;
+  --dt-ring: #10b981 !important;
+  --dt-composer-ring: #10b981 !important;
+  --dt-primary-solid: #059669 !important;
+  --dt-border: #1d3a2f !important;
+  --dt-sidebar-border: #173026 !important;
+  --dt-user-bubble-border: #1d3a2f !important;
+  --dt-input: #08130f !important;
+  --dt-muted: #10211a !important;
+  --ui-success: #34d399 !important;
+}
+
+#eca-banner {
+  position: fixed; z-index: 2147483000; left: 50%; top: 10px; transform: translateX(-50%);
+  width: min(92vw, 720px); box-sizing: border-box;
+  padding: 12px 14px; border-radius: 14px;
+  background: #0c1f18; color: #eaf5ef; border: 1px solid #1f6f55;
+  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, .7);
+  font: 13.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; gap: 12px; align-items: flex-start;
+}
+#eca-banner b { color: #34d399; }
+#eca-banner code {
+  font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #06110d; border: 1px solid #1d3a2f; border-radius: 6px; padding: 1px 6px; color: #d1fae5;
+}
+#eca-banner ol { margin: 6px 0 0; padding-left: 18px; color: #a9c4b7; }
+#eca-banner .eca-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+#eca-banner button {
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 9px; padding: 6px 12px;
+  border: 1px solid #1f6f55; background: #10b981; color: #fff;
+}
+#eca-banner button.eca-quiet { background: transparent; color: #a9c4b7; font-weight: 500; }
+#eca-chip {
+  position: fixed; z-index: 2147482000; right: 150px; top: 5px;
+  font: 11px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em;
+  color: #6ee7b7; background: #0c1f18; border: 1px solid #1d3a2f; border-radius: 999px; padding: 4px 9px;
+  pointer-events: none; opacity: .9;
+}

@@ -1,0 +1,18 @@
+# Blueprint for the leader-agents trial service. It exists to attach the data
+# disk that keeps each leader's workspace (and their Claude sign-in) across
+# restarts; everything else mirrors how the service was created.
+services:
+  - type: web
+    name: eca-agents-trial
+    runtime: docker
+    plan: standard
+    region: oregon
+    repo: https://github.com/ephriamk/hermes-render-mq8w0ekl
+    branch: leader-agents
+    dockerfilePath: ./leader-agents/Dockerfile
+    dockerContext: ./leader-agents
+    autoDeploy: true
+    disk:
+      name: eca-agents-data
+      mountPath: /srv/eca
+      sizeGB: 5
