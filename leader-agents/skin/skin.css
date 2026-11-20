@@ -1,66 +1,68 @@
-/* ECA look for the agent workspace.
-   The workspace sets its theme as inline variables on <html>, so these need
-   !important to win. Colours follow the ECA portal: near-black green with an
-   emerald accent. */
+/* PROPOSED replacement for skin/skin.css (ECA look over the agent workspace).
+   Direction: keep the current screen and layout; polish colour, logo, banner and chip.
+   Each block is numbered to match "Polish list" in spec.md (P1, P2, ...).
+   Needs these files next to it in /_eca/static/ (skin folder): eca-logo-dark.png, eca-mark-dark.png
+   (copy from screen-design/assets/). Selectors marked [verify] were not seen in the engine source
+   and must be checked in the browser inspector before shipping; everything else is already used
+   by today's skin.css / skin.js. */
+
+/* ── P1. ECA tokens (values match screen-design/tokens.css, "current screen" block) ── */
+html {
+  --eca-bg: #0a1210;          /* portal canvas, also the portal PWA theme-color */
+  --eca-sidebar: #070e0b;     /* a step darker than the canvas so the sidebar reads as a rail */
+  --eca-card: #0c1915;        /* message bubbles, cards */
+  --eca-elevated: #10211a;    /* menus, popovers, composer */
+  --eca-bubble: #0d2a20;      /* the person's own messages: emerald-tinted */
+  --eca-border: #1a3229;      /* hairlines; slightly quieter than today's #1d3a2f */
+  --eca-border-strong: #24473a;
+  --eca-accent: #10b981;      /* emerald-500, buttons and focus */
+  --eca-accent-hover: #34d399;
+  --eca-accent-text: #6ee7b7; /* emerald-300 for text/links on dark */
+  --eca-text: #eaf5ef;
+  --eca-text-2: #a9c4b7;
+  --eca-text-3: #7fa08f;
+  --eca-warn: #fbbf24;
+  --eca-radius: 14px;
+  --eca-ease: cubic-bezier(.32, .72, 0, 1);
+}
+
+/* ── P2. Engine theme variables (same names as today, refined values) ──
+   The workspace writes its theme inline on <html>, so !important is required (unchanged). */
 html {
   --theme-primary: #10b981 !important;
   --theme-midground: #10b981 !important;
   --theme-warm: #34d399 !important;
   --theme-secondary: #12382b !important;
   --theme-accent-soft: #0f2a21 !important;
-  --theme-background-seed: #08130f !important;
-  --theme-sidebar-seed: #040b08 !important;
-  --theme-card-seed: #050d0a !important;
-  --theme-elevated-seed: #0e1f18 !important;
-  --theme-bubble-seed: #0a2219 !important;
+  --theme-background-seed: #0a1210 !important;   /* was #08130f: now the exact portal canvas */
+  --theme-sidebar-seed: #070e0b !important;      /* was #040b08: less pitch-black, still a rail */
+  --theme-card-seed: #0c1915 !important;         /* was #050d0a: cards now lift off the canvas */
+  --theme-elevated-seed: #10211a !important;
+  --theme-bubble-seed: #0d2a20 !important;       /* was #0a2219: user bubble reads as "mine" */
   --dt-ring: #10b981 !important;
   --dt-composer-ring: #10b981 !important;
-  --dt-primary-solid: #059669 !important;
-  --dt-border: #1d3a2f !important;
-  --dt-sidebar-border: #173026 !important;
-  --dt-user-bubble-border: #1d3a2f !important;
-  --dt-input: #08130f !important;
+  --dt-primary-solid: #059669 !important;        /* emerald-600: white text passes AA (3.8:1 bold) */
+  --dt-border: #1a3229 !important;
+  --dt-sidebar-border: #13261f !important;
+  --dt-user-bubble-border: #1f4a3a !important;
+  --dt-input: #0c1915 !important;
   --dt-muted: #10211a !important;
   --ui-success: #34d399 !important;
+  --ui-accent: #10b981 !important;               /* [verify] DESIGN.md lists it as the brand accent */
 }
 
-#eca-banner {
-  position: fixed; z-index: 2147483000; left: 50%; top: 10px; transform: translateX(-50%);
-  width: min(92vw, 720px); box-sizing: border-box;
-  padding: 12px 14px; border-radius: 14px;
-  background: #0c1f18; color: #eaf5ef; border: 1px solid #1f6f55;
-  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, .7);
-  font: 13.5px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  display: flex; gap: 12px; align-items: flex-start;
-}
-#eca-banner b { color: #34d399; }
-#eca-banner code {
-  font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
-  background: #06110d; border: 1px solid #1d3a2f; border-radius: 6px; padding: 1px 6px; color: #d1fae5;
-}
-#eca-banner .eca-sub { color: #a9c4b7; margin-top: 2px; }
-#eca-banner { align-items: center; justify-content: space-between; }
-#eca-banner .eca-actions { display: flex; gap: 8px; flex: none; }
-#eca-banner button {
-  font: inherit; font-weight: 600; cursor: pointer; border-radius: 9px; padding: 6px 12px;
-  border: 1px solid #1f6f55; background: #10b981; color: #fff;
-}
-#eca-banner button.eca-quiet { background: transparent; color: #a9c4b7; font-weight: 500; }
-#eca-chip {
-  position: fixed; z-index: 2147482000; right: 118px; top: 4px;
-  display: flex; align-items: center; gap: 8px;
-  font: 11px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em;
-  color: #6ee7b7; background: #0c1f18; border: 1px solid #1d3a2f; border-radius: 999px; padding: 3px 4px 3px 10px;
-}
-#eca-chip button {
-  font: inherit; letter-spacing: 0; cursor: pointer; color: #a9c4b7; background: transparent;
-  border: 1px solid #1d3a2f; border-radius: 999px; padding: 3px 8px;
-}
-#eca-chip button:hover { color: #fff; border-color: #1f6f55; }
+/* ── P3. Type: Sora, the portal's face. Only applies if the font is available.
+   Option A (no network): self-host Sora woff2 in /_eca/static/fonts/ and uncomment @font-face.
+   Option B: leave commented; the system font stays. Never load Google Fonts from the workspace. */
+/*
+/* @font-face { font-family: "Sora"; src: url("/_eca/static/fonts/sora-400.woff2") format("woff2"); font-weight: 400; font-display: swap; } */
+/* @font-face { font-family: "Sora"; src: url("/_eca/static/fonts/sora-600.woff2") format("woff2"); font-weight: 600; font-display: swap; } */
+body { font-family: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+*/
+body { -webkit-font-smoothing: antialiased; }
+::selection { background: rgba(16, 185, 129, .32); }
 
-/* ── A simpler screen ─────────────────────────────────────────────────────
-   Hidden: the engine's settings and layout tools, its profile switcher, its
-   bots and voice controls, and its status line with version numbers. */
+/* ── P4. Hidden engine chrome (unchanged list from today) ── */
 footer[data-slot="statusbar"],
 [data-slot="profile-rail"],
 button[aria-label="Open settings"],
@@ -71,3 +73,133 @@ button[aria-label="Voice dictation"],
 button[aria-label="Start voice conversation"],
 button[aria-label="Voice chat engine"],
 [data-eca-hide] { display: none !important; }
+
+/* ── P5. ECA logo with the wordmark. skin.js inserts <span id="eca-logo"> right before the
+   engine's p.wordmark and adds .eca-has-logo to the wordmark. The wordmark text stays (it is the
+   accessible name and the big "ECA AGENT" the owner likes); the logo sits to its left. ── */
+#eca-logo {
+  display: inline-flex; align-items: center; gap: 12px; margin-bottom: 10px;
+  animation: eca-in 700ms var(--eca-ease) both;
+}
+#eca-logo img { display: block; height: 44px; width: auto; }
+#eca-logo .eca-logo-rule { width: 1px; height: 28px; background: var(--eca-border-strong); }
+#eca-logo .eca-logo-for { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--eca-text-3); }
+p.wordmark.eca-has-logo { color: var(--eca-text) !important; }
+p.wordmark.eca-has-logo + p { color: var(--eca-text-2) !important; }   /* the tagline skin.js writes */
+@media (max-width: 640px) { #eca-logo img { height: 34px; } #eca-logo .eca-logo-for { display: none; } }
+
+/* Small monogram in the sidebar header, inserted by skin.js into the first sidebar header it finds
+   ([data-slot="sidebar-header"] [verify]). Falls back to nothing if the slot is absent. */
+#eca-side-mark { display: flex; align-items: center; gap: 10px; padding: 4px 6px 10px; }
+#eca-side-mark img { height: 22px; width: auto; display: block; }
+#eca-side-mark span { font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--eca-text); }
+
+/* ── P6. Sidebar rows: calmer active state, emerald hint on the current conversation ── */
+li[data-slot="sidebar-menu-item"] > a,
+li[data-slot="sidebar-menu-item"] > button { border-radius: 10px !important; transition: background-color 200ms var(--eca-ease); }
+li[data-slot="sidebar-menu-item"] [data-active="true"],
+li[data-slot="sidebar-menu-item"] [aria-current="page"] {                 /* [verify] active attribute */
+  background: rgba(16, 185, 129, .10) !important;
+  box-shadow: inset 2px 0 0 #10b981;
+}
+
+/* ── P7. Banner "connect your Claude account": glass card, emerald edge, icon, calmer copy block ── */
+#eca-banner {
+  position: fixed; z-index: 2147483000; left: 50%; top: 52px; transform: translateX(-50%);   /* below the top bar, clear of the chip */
+  width: min(92vw, 640px); box-sizing: border-box;
+  display: flex; gap: 14px; align-items: center; justify-content: space-between;
+  padding: 14px 14px 14px 16px; border-radius: 18px;
+  background: rgba(12, 25, 21, .92); color: var(--eca-text);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid var(--eca-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 18px 48px -16px rgba(0,0,0,.75);
+  font-family: inherit; font-size: 14px; line-height: 1.45;
+  animation: eca-drop 600ms var(--eca-ease) both;
+}
+#eca-banner::before {                               /* emerald plug icon tile */
+  content: ""; flex: none; width: 36px; height: 36px; border-radius: 12px;
+  background: rgba(16,185,129,.14) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236ee7b7' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4'/%3E%3C/svg%3E") center / 18px no-repeat;
+  border: 1px solid rgba(110,231,183,.22);
+}
+#eca-banner > div:first-of-type { flex: 1; min-width: 0; }
+#eca-banner b { color: var(--eca-text); font-weight: 600; }
+#eca-banner .eca-sub { color: var(--eca-text-2); margin-top: 2px; font-size: 13px; }
+#eca-banner code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: #06110d; border: 1px solid var(--eca-border); border-radius: 6px; padding: 1px 6px; color: #d1fae5; }
+#eca-banner .eca-actions { display: flex; gap: 6px; flex: none; }
+#eca-banner button {
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 12px; padding: 9px 14px;
+  border: 1px solid rgba(110,231,183,.3); background: #059669; color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 6px 18px -8px rgba(16,185,129,.6);
+  transition: background-color 200ms var(--eca-ease), transform 120ms;
+}
+#eca-banner button:hover { background: #10b981; }
+#eca-banner button:active { transform: scale(.98); }
+#eca-banner button:focus-visible, #eca-chip button:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(16,185,129,.45); }
+#eca-banner button.eca-quiet { background: transparent; border-color: transparent; color: var(--eca-text-2); font-weight: 500; box-shadow: none; }
+#eca-banner button.eca-quiet:hover { color: #fff; background: rgba(255,255,255,.06); }
+@media (max-width: 640px) {
+  #eca-banner { top: auto; bottom: calc(96px + env(safe-area-inset-bottom)); flex-wrap: wrap; }
+  #eca-banner .eca-actions { width: 100%; }
+  #eca-banner .eca-actions button { flex: 1; }
+}
+
+/* ── P8. Identity chip top right: avatar initials + name, status dot, quiet Sign out ── */
+#eca-chip {
+  position: fixed; z-index: 2147482000; right: 118px; top: 6px;   /* right offset: clear the engine's top-right icons (unchanged) */
+  display: flex; align-items: center; gap: 8px; height: 30px;
+  padding: 3px 4px 3px 3px; border-radius: 999px;
+  font-family: inherit; font-size: 12px; line-height: 1; letter-spacing: 0; color: var(--eca-text);
+  background: rgba(12, 25, 21, .85); border: 1px solid var(--eca-border);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+#eca-chip .eca-av {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; position: relative;
+  font-size: 10.5px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #10b981, #0d9488);
+}
+#eca-chip .eca-av::after {                           /* Claude status dot */
+  content: ""; position: absolute; right: -1px; bottom: -1px; width: 8px; height: 8px; border-radius: 50%;
+  background: #34d399; box-shadow: 0 0 0 2px #0c1915;
+}
+#eca-chip.eca-claude-off .eca-av::after { background: var(--eca-warn); }
+#eca-chip .eca-org { color: var(--eca-accent-text); font-weight: 600; letter-spacing: .06em; font-size: 10.5px; }
+#eca-chip .eca-name { color: var(--eca-text); white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+#eca-chip button {
+  font: inherit; cursor: pointer; color: var(--eca-text-2); background: transparent;
+  border: 1px solid var(--eca-border); border-radius: 999px; padding: 5px 10px; margin-left: 2px;
+  transition: color 150ms, border-color 150ms, background-color 150ms;
+}
+#eca-chip button.eca-av { padding: 0; margin: 0; border: 0; color: #fff; background: linear-gradient(135deg, #10b981, #0d9488); cursor: pointer; }
+#eca-chip button:not(.eca-av):hover { color: #fff; border-color: var(--eca-border-strong); background: rgba(255,255,255,.05); }
+#eca-chip button[hidden] { display: none; }
+#eca-chip button.eca-reconnect { color: #fde68a; border-color: rgba(253,230,138,.3); }
+@media (max-width: 640px) {             /* phone: avatar only; tapping it shows Sign out */
+  #eca-chip { right: 8px; top: 6px; padding-right: 3px; }
+  #eca-chip .eca-org, #eca-chip .eca-name { display: none; }
+  #eca-chip:not(.eca-open) button:not(.eca-av) { display: none; }
+}
+
+/* ── P9. Error cards in the thread: ECA amber instead of the engine's red for sign-in problems ── */
+[data-slot="aui_error-card"] {
+  border-radius: 16px !important;
+  border-color: rgba(253, 230, 138, .24) !important;
+  background: rgba(251, 191, 36, .07) !important;
+}
+[data-slot="aui_error-card"] button { border-radius: 12px !important; }
+
+/* ── P10. Composer focus glow and user bubble edge (engine variables do most of it) ── */
+[role="textbox"]:focus-visible, textarea:focus-visible { outline: none; }
+form:has(textarea:focus-visible), form:has([role="textbox"]:focus) {        /* [verify] composer is a form */
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, .12);
+  border-radius: 18px;
+}
+
+/* ── P11. Quiet scrollbars (dark, thin) ── */
+* { scrollbar-width: thin; scrollbar-color: #1f3a30 transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #1f3a30; border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: #2a5242; }
+
+/* ── P12. Motion ── */
+@keyframes eca-in { from { opacity: 0; transform: translateY(8px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes eca-drop { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@media (prefers-reduced-motion: reduce) { #eca-logo, #eca-banner { animation: none; } }

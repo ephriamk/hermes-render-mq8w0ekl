@@ -1,3 +1,4 @@
+// PROPOSED replacement for skin/skin.js. Changes vs today are marked "P5" / "P8" (see spec.md).
 // ECA layer over the agent workspace: the name, whose workspace it is, a way
 // to sign out, and one plain prompt while the leader's Claude account is not
 // connected yet. It never touches a login: the leader signs in inside the
@@ -29,7 +30,7 @@
   var HIDE_MENU = { "Capabilities": 1, "Messaging": 1 };
   var BLOCKED_ROUTES = /^#\/(capabilities|messaging|settings|bots|profiles|gateways|kanban|connectors|plugins|skills)(\/|\?|$)/;
   // Never touched: what people and the agent wrote.
-  var KEEP = '[data-slot="aui_thread-content"],[data-slot="row-button"],[data-slot="pane-tab"],[role="textbox"],textarea,input,#eca-banner,#eca-chip,.xterm,pre,code';
+  var KEEP = '[data-slot="aui_thread-content"],[data-slot="row-button"],[data-slot="pane-tab"],[role="textbox"],textarea,input,#eca-banner,#eca-chip,#eca-logo,#eca-side-mark,.xterm,pre,code';
   var CHROME_IN_THREAD = '[data-slot="aui_error-card"],[data-slot="aui_system-message-root"]';
   var SWAPS = [
     [/Claude Subscription DirectSDK \(Experimental\)/g, "Claude"],
@@ -92,6 +93,9 @@
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');
     for (var i = 0; i < items.length; i++) {
       if (HIDE_MENU[(items[i].textContent || "").trim()]) items[i].setAttribute("data-eca-hide", "");
+      // "Artifacts" reads as "Files" in the sidebar (decision 4).
+      var tw = document.createTreeWalker(items[i], NodeFilter.SHOW_TEXT), tn;
+      while ((tn = tw.nextNode())) { if (tn.nodeValue.trim() === "Artifacts") tn.nodeValue = tn.nodeValue.replace("Artifacts", "Files"); }
     }
     var marks = document.querySelectorAll("p.wordmark");
     for (var m = 0; m < marks.length; m++) {
@@ -104,12 +108,35 @@
       var tag = p.nextElementSibling;
       if (tag && tag.tagName === "P" && tag.textContent !== TAGLINE) tag.textContent = TAGLINE;
       if (changed) { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }
+      logo(p);
     }
+    sideMark();
     if (document.body) {
       scrubWithin(document.body);
       var inThread = document.querySelectorAll(CHROME_IN_THREAD);
       for (var k = 0; k < inThread.length; k++) scrubWithin(inThread[k]);
     }
+  }
+  // P5. The ECA logo beside the big wordmark, and a small monogram at the top of the sidebar.
+  // Images are served from the skin folder (/_eca/static/). Decorative: the wordmark keeps the name.
+  var STATIC = "/_eca/static/";
+  function logo(p) {
+    if (!p.classList.contains("eca-has-logo")) p.classList.add("eca-has-logo");
+    var prev = p.previousElementSibling;
+    if (prev && prev.id === "eca-logo") return;
+    var old = document.getElementById("eca-logo"); if (old) old.remove();
+    var wrap = el("span", { id: "eca-logo", "aria-hidden": "true" });
+    wrap.appendChild(el("img", { src: STATIC + "eca-logo-dark.png", alt: "", height: "44" }));
+    p.parentNode.insertBefore(wrap, p);
+  }
+  function sideMark() {
+    if (document.getElementById("eca-side-mark")) return;
+    var head = document.querySelector('[data-slot="sidebar-header"]');   // [verify] slot name
+    if (!head) return;
+    var m = el("div", { id: "eca-side-mark" });
+    m.appendChild(el("img", { src: STATIC + "eca-mark-dark.png", alt: "" }));
+    m.appendChild(el("span", null, "ECA Agent"));
+    head.insertBefore(m, head.firstChild);
   }
   function brand() { strip(); }
   var queued = false;
@@ -139,14 +166,34 @@
         location.replace("/_eca/signed-out?bye=1");
       });
   }
-  function chip(name) {
-    if (!name || document.getElementById("eca-chip")) return;
-    var c = el("div", { id: "eca-chip" });
-    c.appendChild(el("span", null, "ECA · " + name));
-    var out = el("button", { type: "button", title: "Sign out of this workspace on this browser" }, "Sign out");
-    out.addEventListener("click", signOut);
-    c.appendChild(out);
-    document.body.appendChild(c);
+  // P8. Identity chip: initials avatar with a Claude status dot, "ECA" + name, Sign out.
+  // When Claude is not connected it also offers "Reconnect Claude". On a phone it collapses
+  // to the avatar; tapping the avatar reveals the buttons.
+  function initials(name) {
+    var parts = String(name).replace(/,/g, " ").trim().split(/\s+/);
+    return ((parts[0] || "")[0] || "").toUpperCase() + ((parts.length > 1 ? parts[parts.length - 1][0] : "") || "").toUpperCase();
+  }
+  function chip(name, claudeOn) {
+    if (!name) return;
+    var c = document.getElementById("eca-chip");
+    if (!c) {
+      c = el("div", { id: "eca-chip", role: "group", "aria-label": "Your ECA account" });
+      var av = el("button", { type: "button", "class": "eca-av", "aria-label": "Account" }, initials(name));
+      av.addEventListener("click", function () { c.classList.toggle("eca-open"); });
+      c.appendChild(av);
+      c.appendChild(el("span", { "class": "eca-org" }, "ECA"));
+      c.appendChild(el("span", { "class": "eca-name" }, name));
+      var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect Claude");
+      re.addEventListener("click", function () { location.assign("/_eca/connect"); });
+      c.appendChild(re);
+      var out = el("button", { type: "button", "aria-label": "Sign out of your agent on this browser" }, "Sign out");
+      out.addEventListener("click", signOut);
+      c.appendChild(out);
+      document.body.appendChild(c);
+    }
+    c.classList.toggle("eca-claude-off", claudeOn === false);
+    var r = c.querySelector(".eca-reconnect");
+    if (claudeOn === false) r.removeAttribute("hidden"); else r.setAttribute("hidden", "");
   }
   function banner(show) {
     var old = document.getElementById("eca-banner");
@@ -185,7 +232,7 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d) return;
-        chip(d.name);
+        chip(d.name, d.claude_signed_in);
         var needs = d.claude_signed_in === false;
         banner(needs);
         clearTimeout(timer);
