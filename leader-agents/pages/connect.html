@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Connect Claude</title>
+<link rel="stylesheet" href="/_eca/vendor/xterm.css">
+<style>
+:root{color-scheme:dark}
+body{margin:0;min-height:100vh;background:#07130f;color:#eaf5ef;
+font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center}
+main{width:min(94vw,760px);padding:28px 30px;border:1px solid #1d3a2f;border-radius:20px;background:#0c1f18;box-sizing:border-box}
+h1{font-size:22px;margin:0 0 4px} .sub{color:#a9c4b7;margin:0 0 18px}
+.step{display:flex;gap:14px;margin:16px 0;align-items:flex-start}
+.n{flex:none;width:28px;height:28px;border-radius:50%;background:#12382b;color:#6ee7b7;font-weight:700;
+display:grid;place-items:center;font-size:14px}
+.step p{margin:2px 0 8px;color:#cfe3d8} .step small{color:#7fa08f;display:block;margin-top:8px}
+button{display:inline-block;padding:10px 18px;border-radius:12px;border:0;background:#10b981;color:#fff;
+font:inherit;font-weight:600;cursor:pointer}
+button[disabled]{opacity:.45;cursor:default}
+#wait{color:#7fa08f;font-size:14px;margin-left:10px}
+a.quiet{color:#7fa08f;font-size:14px}
+#box{border:1px solid #1d3a2f;border-radius:12px;background:#000;padding:8px;overflow-x:auto;overflow-y:hidden}
+#box:focus-within{border-color:#10b981}
+#ok{display:none;padding:14px 16px;border-radius:12px;background:#0f2a21;border:1px solid #1f6f55;margin:6px 0 14px}
+#ok b{color:#34d399} #msg{color:#fbbf24;min-height:22px;font-size:14px;margin:0}
+</style></head><body><main data-cols="__COLS__" data-rows="__ROWS__">
+<h1>Connect your Claude account</h1>
+<p class="sub">For __NAME__. You do this once. Your agent then runs on your own Claude membership.</p>
+<div id="steps">
+<div class="step"><div class="n">1</div><div><p>Open Claude's sign-in page and approve.</p>
+<button id="open" disabled>Open Claude sign-in</button><span id="wait">Getting your link…</span></div></div>
+<div class="step"><div class="n">2</div><div style="min-width:0;flex:1"><p>Claude then shows you a code. Copy it, click in
+the black box below, paste it and press Enter.</p>
+<div id="box"><div id="t"></div></div>
+<small>The black box is Claude's own sign-in program. ECA never sees your Claude password, and nothing typed here is
+stored.</small></div></div>
+<p id="msg"></p>
+</div>
+<div id="ok"><b>Claude is connected.</b> Opening your agent…</div>
+<p><a class="quiet" href="/_eca/open">Skip for now</a></p>
+</main>
+<script src="/_eca/vendor/xterm.js"></script>
+<script src="/_eca/static/connect.js"></script>
+</body></html>

@@ -17,13 +17,22 @@ RUN npm install -g --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/clau
  && ln -sf "$(npm prefix -g)/bin/claude" /usr/local/bin/claude \
  && claude --version
 
+# The terminal box used by the "Connect Claude" page (xterm.js, MIT).
+RUN mkdir -p /tmp/xt /opt/eca-vendor && cd /tmp/xt \
+ && npm install --no-audit --no-fund --ignore-scripts @xterm/xterm@5.5.0 \
+ && cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css /opt/eca-vendor/ \
+ && chmod -R a+rX /opt/eca-vendor && rm -rf /tmp/xt
+
 COPY --chown=root:root . /opt/eca/
 RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && chmod -R a+rX /opt/eca/skin \
- && /opt/hermes/.venv/bin/python -m py_compile /opt/eca/supervisor.py \
+ && /opt/hermes/.venv/bin/python -m py_compile /opt/eca/supervisor.py /opt/eca/selftest.py \
  && sed 's/__PORT__/10000/' /opt/eca/nginx.conf.template > /tmp/nginx-check.conf \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf
+
+# The separation self-test runs at start while this is set (see selftest.py).
+ENV ECA_SELFTEST=1
 
 # A plain init that reaps the processes the workspaces leave behind. (The
 # image's own /usr/bin/tini is a shim for Hermes's s6 start-up, which sets up

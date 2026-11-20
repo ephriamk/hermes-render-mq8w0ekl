@@ -12,6 +12,20 @@ account with its own home. This process (root, standard library only):
   * tells nginx, per request, which leader a browser belongs to (/_auth);
   * vouches for agent tokens when the ECA backend asks (/internal/verify).
 
+Rules this file keeps (each one closes a way for work to cross between people):
+
+  1. Root never reads or writes inside a leader's home. Every file there is
+     touched by a helper running as that leader, so a planted link can only
+     hurt its owner.
+  2. Everything a leader runs gets a private temp folder and creates files
+     only its owner can read (umask 077).
+  3. A request is routed only by the supervisor's own cookie, and only to a
+     port whose listener is owned by that leader's account (checked on every
+     request).
+  4. The supervisor is reachable only through nginx (a private socket), never
+     directly by a leader's processes.
+  5. Nothing a leader types or reads is written to the shared server log.
+
 It never sees a model login: each leader signs in to Claude themselves, inside
 the unmodified Claude program in their own workspace.
 
@@ -21,17 +35,24 @@ address, set in configuration.
 
 from __future__ import annotations
 
+import base64
+import fcntl
 import hashlib
 import html
 import http.server
 import json
 import os
+import pty
 import pwd
 import re
 import secrets
+import shutil
 import signal
+import socketserver
+import struct
 import subprocess
 import sys
+import termios
 import threading
 import time
 import urllib.error
@@ -39,16 +60,21 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-SUP_HOST, SUP_PORT = "127.0.0.1", 9000
 DATA = Path(os.environ.get("ECA_DATA_DIR", "/srv/eca"))
 HOMES = DATA / "agents"
 STATE_FILE = DATA / "state" / "agents.json"
-RUN = Path("/run/eca")
+RUN = Path(os.environ.get("ECA_RUN_DIR", "/run/eca"))
+SUP_SOCK = RUN / "sup" / "sup.sock"
+SUP_TCP_PORT = int(os.environ.get("ECA_SUP_TCP_PORT", "0") or 0)        # tests only
 BACKEND = os.environ.get("ECA_BACKEND_URL", "https://ecacombined-1.onrender.com").rstrip("/")
+PORTAL_URL = os.environ.get("ECA_PORTAL_URL", "https://www.ecastockreport.com").rstrip("/")
 PORTAL_ORIGINS = {o.strip().rstrip("/") for o in os.environ.get(
     "ECA_PORTAL_ORIGINS", "https://www.ecastockreport.com,https://ecastockreport.com").split(",") if o.strip()}
 IDLE_STOP_MINUTES = int(os.environ.get("ECA_IDLE_STOP_MINUTES", "0") or 0)   # 0 = never
+SELFTEST = os.environ.get("ECA_SELFTEST", "") in ("1", "true", "yes")
 HERMES = "/opt/hermes/bin/hermes"
+PY = "/opt/hermes/.venv/bin/python"
+CLAUDE = "/usr/local/bin/claude"
 PLUGIN = "claude-subscription-directsdk"
 PROVIDER = "claude-subscription-directsdk-experimental"
 DEFAULT_MODEL = os.environ.get("ECA_DEFAULT_MODEL", "sonnet")
@@ -56,15 +82,17 @@ AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sb
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
 FIRST_UID, FIRST_PORT = 20001, 9201
+MAX_PROCESSES = "4096"          # per account: stops a runaway job taking the whole server
 try:
     WEB_GID = pwd.getpwnam("www-data").pw_gid
-except KeyError:          # not on the server image (tests)
-    WEB_GID = 33
+except KeyError:                # not on the server image (tests)
+    WEB_GID = os.getgid()
 
 _lock = threading.RLock()
 _state: dict = {"next_uid": FIRST_UID, "next_port": FIRST_PORT, "agents": {}}
-_runtime: dict = {}     # slug -> {"status", "detail", "gateway", "relay", "last_seen", "listener_ok_at"}
-_sessions: dict = {}    # sha256(cookie) -> {"emp", "expires", "confirmed", "portal"}
+_runtime: dict = {}     # slug -> {"status", "detail", "gateway", "relay", "last_seen", "epoch", "restarts"}
+_sessions: dict = {}    # sha256(cookie) -> {"emp", "expires", "confirmed"}
+_stopping = threading.Event()
 
 
 def log(msg: str) -> None:
@@ -79,18 +107,26 @@ def _h(value: str) -> str:
 
 def load_state() -> None:
     global _state
-    try:
-        _state = json.loads(STATE_FILE.read_text())
-    except FileNotFoundError:
-        pass
-    except Exception as exc:  # a damaged file must not hand out someone else's home
-        log(f"state file unreadable ({exc}); refusing to start")
-        raise
+    for candidate in (STATE_FILE, STATE_FILE.with_suffix(".bak")):
+        try:
+            _state = json.loads(candidate.read_text())
+            if candidate != STATE_FILE:
+                log("state restored from the backup copy")
+            return
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            log(f"{candidate.name} unreadable ({type(exc).__name__})")
+    if HOMES.exists() and any(HOMES.iterdir()):
+        # Homes without the list that says whose they are: never guess.
+        raise RuntimeError("workspaces exist but the account list is missing; refusing to start")
 
 
 def save_state() -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE_FILE.parent, 0o700)
+    if STATE_FILE.exists():
+        shutil.copy2(STATE_FILE, STATE_FILE.with_suffix(".bak"))
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(_state, indent=1))
     os.chmod(tmp, 0o600)
@@ -104,7 +140,7 @@ def account_name(a: dict) -> str:
 
 
 def home_of(a: dict) -> Path:
-    return HOMES / a["slug"]
+    return Path(a["home"]) if a.get("home") else HOMES / a["slug"]     # "home" is set only by the self-test
 
 
 def user_env(a: dict) -> dict:
@@ -114,8 +150,9 @@ def user_env(a: dict) -> dict:
         "HOME": home, "USER": name, "LOGNAME": name, "SHELL": "/bin/bash",
         "HERMES_HOME": f"{home}/.hermes", "PATH": AGENT_PATH,
         "TERM": "xterm-256color", "LANG": "C.UTF-8",
+        "TMPDIR": str(RUN / "tmp" / a["slug"]),
         "XDG_RUNTIME_DIR": str(RUN / "rt" / a["slug"]),
-        "HERMES_PYTHON": "/opt/hermes/.venv/bin/python",
+        "HERMES_PYTHON": PY,
         "HERMES_RUNTIME_DIR": "/opt/hermes/tools",
         "HERMES_TUI_DIR": "/opt/hermes/ui-tui",
         "HERMES_WEB_DIST": "/opt/hermes/hermes_cli/web_dist",
@@ -124,17 +161,20 @@ def user_env(a: dict) -> dict:
 
 
 def _drop(a: dict) -> dict:
+    """How every process of a leader is started: their account, no extra
+    groups, a clean environment, and files private by default."""
     return {"user": a["uid"], "group": a["uid"], "extra_groups": [], "env": user_env(a),
-            "cwd": str(home_of(a)), "start_new_session": True}
+            "cwd": str(home_of(a)), "start_new_session": True, "umask": 0o077}
 
 
-def run_as(a: dict, argv: list, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, **_drop(a))
+def run_as(a: dict, argv: list, timeout: int = 120, stdin: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, input=stdin, **_drop(a))
 
 
 def ensure_account(a: dict) -> None:
     """The passwd entry lives in the container, the home on the data disk, so
-    the entry is recreated at boot with the same numeric id."""
+    the entry is recreated at boot with the same numeric id. Every path made
+    here sits in a folder only root can change, so none can be swapped."""
     name, uid = account_name(a), a["uid"]
     try:
         pwd.getpwnam(name)
@@ -144,14 +184,56 @@ def ensure_account(a: dict) -> None:
                         "--home-dir", str(home_of(a)), "--shell", "/bin/bash", name],
                        check=True, capture_output=True)
     home = home_of(a)
+    if home.is_symlink():
+        raise RuntimeError("workspace folder is a link; refusing to use it")
+    if home.exists() and home.stat().st_uid not in (uid, 0):
+        raise RuntimeError("workspace folder belongs to a different account; refusing to use it")
     home.mkdir(parents=True, exist_ok=True)
-    os.chown(home, uid, uid)
+    os.chown(home, uid, uid, follow_symlinks=False)
     os.chmod(home, 0o700)
-    for sub, mode, gid in (("rt", 0o700, uid), ("a", 0o750, WEB_GID)):
+    for sub, mode, gid in (("rt", 0o700, uid), ("tmp", 0o700, uid), ("a", 0o750, WEB_GID)):
         d = RUN / sub / a["slug"]
         d.mkdir(parents=True, exist_ok=True)
-        os.chown(d, uid, gid)
+        os.chown(d, uid, gid, follow_symlinks=False)
         os.chmod(d, mode)
+
+
+# Runs AS THE LEADER, in their home. Reads never follow a link out of the home
+# on behalf of root, because root is not the one reading.
+HOME_HELPER = r'''
+import json, os, sys
+req = json.load(sys.stdin); out = []
+for o in req["ops"]:
+    p = o["path"]
+    try:
+        if o["op"] == "read":
+            fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
+                out.append({"ok": True, "text": f.read(200000)})
+        elif o["op"] == "exists":
+            out.append({"ok": True, "exists": os.path.lexists(p)})
+        elif o["op"] == "write":
+            os.makedirs(os.path.dirname(p) or ".", mode=0o700, exist_ok=True)
+            tmp = p + ".eca-tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, o.get("mode", 0o600))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(o["content"])
+            os.chmod(tmp, o.get("mode", 0o600)); os.replace(tmp, p)
+            out.append({"ok": True})
+        else:
+            out.append({"ok": False, "error": "unknown op"})
+    except Exception as e:
+        out.append({"ok": False, "error": type(e).__name__})
+json.dump({"results": out}, sys.stdout)
+'''
+
+
+def home_ops(a: dict, ops: list) -> list:
+    r = run_as(a, [PY, "-I", "-c", HOME_HELPER], timeout=60, stdin=json.dumps({"ops": ops}))
+    try:
+        return json.loads(r.stdout)["results"]
+    except Exception:
+        raise RuntimeError(f"could not work in the workspace folder ({(r.stderr or '')[-160:]})")
 
 
 SOUL = """# ECA Agent
@@ -176,6 +258,11 @@ workspace, build reports and files, and schedule recurring work.
   cannot answer, say so plainly.
 - Say which club and which dates a number covers.
 
+## This workspace
+
+- It belongs to {name} alone. Other leaders have their own and cannot see this
+  one. Keep working files in the home folder, not in shared system folders.
+
 ## Style
 
 Plain English, short sentences, numbers first. No member names in reports
@@ -183,57 +270,65 @@ unless {name} asks for them.
 """
 
 
-def provision(a: dict) -> None:
-    """First-time setup of a leader's Hermes home. Safe to run again."""
-    home = home_of(a)
-    hh = home / ".hermes"
-    r = run_as(a, [HERMES, "--version"], timeout=120)     # creates the home layout
-    if r.returncode != 0:
-        raise RuntimeError(f"hermes did not start for {a['slug']}: {(r.stderr or r.stdout)[-300:]}")
-    cfg = hh / "config.yaml"
-    if not a.get("provisioned") or not cfg.exists() or "mcp_servers" not in cfg.read_text():
-        cfg.write_text(
-            "model:\n"
-            f"  provider: {PROVIDER}\n"
-            f"  default: {DEFAULT_MODEL}\n"
-            "webapp:\n"
+def _config_text(a: dict, bare: bool) -> str:
+    text = ("webapp:\n"
             "  enabled: true\n"
             "  host: 127.0.0.1\n"
-            f"  port: {a['port']}\n"
+            f"  port: {a['port']}\n")
+    if bare:
+        return text
+    return ("model:\n"
+            f"  provider: {PROVIDER}\n"
+            f"  default: {DEFAULT_MODEL}\n"
+            + text +
             "mcp_servers:\n"
             "  eca:\n"
             f"    url: {BACKEND}/api/intel/mcp\n"
             "    headers:\n"
             "      Authorization: \"Bearer ${ECA_GATEWAY_TOKEN}\"\n"
-            "    timeout: 120\n"
-        )
-        os.chown(cfg, a["uid"], a["uid"])
-        os.chmod(cfg, 0o600)
-    soul = hh / "SOUL.md"
-    marker = hh / ".eca-soul"
-    if not marker.exists():
-        soul.write_text(SOUL.format(name=a.get("name") or a.get("username") or "this leader",
-                                    role=a.get("role") or "leader"))
-        os.chown(soul, a["uid"], a["uid"])
-        marker.write_text("1")
-        os.chown(marker, a["uid"], a["uid"])
-    env_file = hh / ".env"
-    text = env_file.read_text() if env_file.exists() else ""
-    if "ECA_GATEWAY_TOKEN=" not in text or not a.get("token_sha256"):
-        token = secrets.token_urlsafe(40)
-        lines = [ln for ln in text.splitlines() if not ln.startswith("ECA_GATEWAY_TOKEN=")]
-        lines.append(f"ECA_GATEWAY_TOKEN={token}")
-        env_file.write_text("\n".join(lines) + "\n")
-        os.chown(env_file, a["uid"], a["uid"])
-        os.chmod(env_file, 0o600)
-        a["token_sha256"] = _h(token)
-    if not (hh / "plugins" / PROVIDER).exists():
-        r = run_as(a, [HERMES, "plugins", "install", PLUGIN, "--yes-deps", "--enable"], timeout=300)
-        if not (hh / "plugins" / PROVIDER).exists():
-            raise RuntimeError(f"claude plugin did not install: {(r.stdout + r.stderr)[-300:]}")
+            "    timeout: 120\n")
+
+
+def provision(a: dict, bare: bool = False) -> None:
+    """Set up (or repair) a leader's Hermes home. Safe to run on every start.
+    `bare` is for the self-test accounts: the Webapp only, no model, no data."""
+    r = run_as(a, [HERMES, "--version"], timeout=180)     # creates the home layout
+    if r.returncode != 0:
+        raise RuntimeError("hermes did not start in the workspace")
+    cfg, env, soul, mark = ".hermes/config.yaml", ".hermes/.env", ".hermes/SOUL.md", ".hermes/.eca-soul"
+    plugin_dir = f".hermes/plugins/{PROVIDER}"
+    got = home_ops(a, [{"op": "read", "path": cfg}, {"op": "read", "path": env},
+                       {"op": "exists", "path": mark}, {"op": "exists", "path": plugin_dir}])
+    cfg_text = got[0].get("text") or ""
+    writes = []
+    if not a.get("provisioned") or f"port: {a['port']}" not in cfg_text or "enabled: true" not in cfg_text:
+        # First set-up, or the Webapp block was removed: without it the workspace cannot open.
+        writes.append({"op": "write", "path": cfg, "content": _config_text(a, bare), "mode": 0o600})
+    if not got[2].get("exists"):
+        writes.append({"op": "write", "path": soul, "mode": 0o600, "content": SOUL.format(
+            name=a.get("name") or a.get("username") or "this leader", role=a.get("role") or "leader")})
+        writes.append({"op": "write", "path": mark, "content": "1", "mode": 0o600})
+    if not bare:
+        env_text = got[1].get("text") or ""
+        m = re.search(r"^ECA_GATEWAY_TOKEN=(\S+)$", env_text, re.M)
+        if not (m and a.get("token_sha256") and secrets.compare_digest(_h(m.group(1)), a["token_sha256"])):
+            token = secrets.token_urlsafe(40)
+            lines = [ln for ln in env_text.splitlines() if not ln.startswith("ECA_GATEWAY_TOKEN=")]
+            lines.append(f"ECA_GATEWAY_TOKEN={token}")
+            writes.append({"op": "write", "path": env, "content": "\n".join(lines) + "\n", "mode": 0o600})
+            a["token_sha256"] = _h(token)
+    if writes:
+        for res in home_ops(a, writes):
+            if not res.get("ok"):
+                raise RuntimeError("could not write the workspace settings")
+    if not bare and not got[3].get("exists"):
+        run_as(a, [HERMES, "plugins", "install", PLUGIN, "--yes-deps", "--enable"], timeout=300)
+        if not home_ops(a, [{"op": "exists", "path": plugin_dir}])[0].get("exists"):
+            raise RuntimeError("the Claude plugin did not install")
     a["provisioned"] = True
-    with _lock:
-        save_state()
+    if not bare:
+        with _lock:
+            save_state()
 
 
 # ───────────────────────────── processes ─────────────────────────────
@@ -241,15 +336,25 @@ def provision(a: dict) -> None:
 def _pump(proc: subprocess.Popen, label: str) -> None:
     for line in iter(proc.stdout.readline, b""):
         try:
-            print(f"[{label}] {line.decode('utf-8', 'replace').rstrip()[:400]}", flush=True)
+            print(f"[{label}] {line.decode('utf-8', 'replace').rstrip()[:300]}", flush=True)
         except Exception:
             pass
 
 
-def _spawn(a: dict, argv: list, label: str) -> subprocess.Popen:
-    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL, **_drop(a))
-    threading.Thread(target=_pump, args=(proc, f"{label}:{a['slug']}"), daemon=True).start()
+def _spawn(a: dict, argv: list, label: str, quiet: bool = False, limited: bool = False) -> subprocess.Popen:
+    kw = _drop(a)
+    if limited:
+        # Root sets the process limit, then gives up its powers for good. The limit is counted
+        # against the leader's account, so one runaway job cannot take the whole server.
+        argv = ["prlimit", f"--nproc={MAX_PROCESSES}", "--", "setpriv", f"--reuid={a['uid']}",
+                f"--regid={a['uid']}", "--clear-groups", "--"] + argv
+        for k in ("user", "group", "extra_groups"):
+            kw.pop(k)
+    proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL if quiet else subprocess.PIPE,
+                            stderr=subprocess.DEVNULL if quiet else subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, **kw)
+    if not quiet:
+        threading.Thread(target=_pump, args=(proc, f"{label}:{a['slug']}"), daemon=True).start()
     return proc
 
 
@@ -284,7 +389,7 @@ def _alive(proc) -> bool:
     return proc is not None and proc.poll() is None
 
 
-def start_agent(a: dict) -> None:
+def start_agent(a: dict, bare: bool = False) -> None:
     """Runs in a worker thread. Leaves a status the browser can poll."""
     slug = a["slug"]
     rt = _runtime.setdefault(slug, {})
@@ -293,36 +398,34 @@ def start_agent(a: dict) -> None:
         ensure_account(a)
         if not a.get("provisioned"):
             rt["detail"] = "Setting up your workspace for the first time (about a minute)"
-        provision(a)
+        provision(a, bare=bare)
         sock = RUN / "a" / slug / "web.sock"
         if not _alive(rt.get("relay")):
+            # The relay output is discarded: it must never carry anyone's traffic into the log.
             rt["relay"] = _spawn(a, ["socat", "-d0", f"UNIX-LISTEN:{sock},fork,mode=666,unlink-early",
-                                     f"TCP:127.0.0.1:{a['port']}"], "relay")
+                                     f"TCP:127.0.0.1:{a['port']}"], "relay", quiet=True)
         rt["detail"] = "Starting your agent"
         owner = listener_uid(a["port"])
         if owner is not None and owner != a["uid"]:
+            log(f"{slug}: port {a['port']} is held by uid {owner}; refusing to route there")
             raise RuntimeError("the workspace port is held by another account")
         if webapp_state(a["port"]) == "down":
             if not _alive(rt.get("gateway")):
                 rt["gateway"] = _spawn(a, [HERMES, "gateway", "run", "--quiet", "--no-supervise",
-                                           "--external-supervisor"], "gateway")
-            deadline = time.time() + 120
+                                           "--external-supervisor"], "gateway", limited=True)
+            deadline = time.time() + 150
             while time.time() < deadline and webapp_state(a["port"]) == "down":
                 if not _alive(rt.get("gateway")):
-                    # The foreground gateway refused; let Hermes's own launcher start one.
-                    log(f"{slug}: foreground gateway exited ({rt['gateway'].returncode}); using the launcher")
-                    run_as(a, [HERMES, "webapp", "--no-open", "--skip-build"], timeout=150)
-                    break
-                time.sleep(1.5)
+                    raise RuntimeError("the agent stopped while starting")
+                time.sleep(1.0)
         deadline = time.time() + 120
         while time.time() < deadline and webapp_state(a["port"]) != "ready":
-            time.sleep(1.5)
+            time.sleep(1.0)
         if webapp_state(a["port"]) != "ready":
             raise RuntimeError("the agent did not come up in time")
-        owner = listener_uid(a["port"])
-        if owner is not None and owner != a["uid"]:
+        if listener_uid(a["port"]) != a["uid"]:
             raise RuntimeError("the workspace port is held by another account")
-        rt.update(status="ready", detail="", last_seen=time.time(), listener_ok_at=time.time())
+        rt.update(status="ready", detail="", last_seen=time.time(), epoch=int(time.time()))
         log(f"{slug}: ready on port {a['port']}")
     except Exception as exc:
         log(f"{slug}: start failed: {exc}")
@@ -335,6 +438,8 @@ def ensure_agent(identity: dict) -> dict:
         a = _state["agents"].get(emp)
         if a is None:
             slug = "e" + re.sub(r"[^a-z0-9]", "", emp.lower())[:20]
+            if any(x["slug"] == slug for x in _state["agents"].values()) or len(slug) < 2:
+                raise RuntimeError("could not name the workspace")
             a = {"slug": slug, "uid": _state["next_uid"], "port": _state["next_port"],
                  "employee_number": emp, "created": int(time.time())}
             _state["next_uid"] += 1
@@ -350,15 +455,17 @@ def ensure_agent(identity: dict) -> dict:
     return a
 
 
+_LAUNCH = re.compile(r"https?://127\.0\.0\.1:(\d+)(/webapp/launch#ticket=[A-Za-z0-9_-]{43}(?:&query=[A-Za-z0-9%._~=&-]*)?)(?:\s|$)")
+
+
 def mint_launch_path(a: dict) -> str:
     """Ask the leader's own gateway for a one-use sign-in link and return its
     path and fragment. The link is never logged."""
     r = run_as(a, [HERMES, "webapp", "--no-open", "--skip-build"], timeout=120)
-    m = re.search(r"https?://127\.0\.0\.1:%d(/\S+)" % a["port"], r.stdout or "")
-    if not m:
-        tail = re.sub(r"ticket=\S+", "ticket=<hidden>", (r.stdout or "") + (r.stderr or ""))[-300:]
-        raise RuntimeError(f"no launch link from the gateway: {tail}")
-    return m.group(1)
+    m = _LAUNCH.search(r.stdout or "")
+    if not m or int(m.group(1)) != a["port"]:
+        raise RuntimeError("no launch link from the gateway")
+    return m.group(2)
 
 
 _claude_seen: dict = {}   # slug -> (checked at, signed in?)
@@ -372,7 +479,7 @@ def claude_signed_in(a: dict):
     if hit and now - hit[0] < 10:
         return hit[1]
     try:
-        r = run_as(a, ["/usr/local/bin/claude", "auth", "status"], timeout=20)
+        r = run_as(a, [CLAUDE, "auth", "status"], timeout=20)
         value = bool(json.loads(r.stdout or "{}").get("loggedIn"))
     except Exception:
         value = None
@@ -380,35 +487,138 @@ def claude_signed_in(a: dict):
     return value
 
 
-def stop_agent(a: dict) -> None:
-    rt = _runtime.get(a["slug"]) or {}
-    try:
-        run_as(a, [HERMES, "gateway", "stop"], timeout=60)
-    except Exception:
-        pass
-    for key in ("gateway", "relay"):
-        proc = rt.get(key)
-        if _alive(proc):
+# ───────────────────────────── connecting Claude ─────────────────────────────
+# The "Connect Claude" page shows the Claude program's own sign-in, running in
+# the leader's account, in a terminal box on the page. This code only carries
+# the screen out and the keystrokes in, as any terminal does. It never reads,
+# keeps or logs what passes through, and it holds nothing once the program ends.
+
+CONNECT_COLS, CONNECT_ROWS = 600, 16      # wide, so the sign-in link stays on one line
+_connects: dict = {}                      # slug -> Connect
+
+
+class Connect:
+    def __init__(self, a: dict):
+        self.a, self.buf, self.base, self.done = a, bytearray(), 0, False
+        self.cond = threading.Condition()
+        self.started = time.time()
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", CONNECT_ROWS, CONNECT_COLS, 0, 0))
+        self.proc = subprocess.Popen([CLAUDE, "auth", "login", "--claudeai"], stdin=slave, stdout=slave,
+                                     stderr=slave, close_fds=True, **_drop(a))
+        os.close(slave)
+        self.master = master
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self) -> None:
+        try:
+            while True:
+                try:
+                    chunk = os.read(self.master, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                with self.cond:
+                    self.buf += chunk
+                    extra = len(self.buf) - 262144
+                    if extra > 0:
+                        del self.buf[:extra]
+                        self.base += extra
+                    self.cond.notify_all()
+        finally:
+            with self.cond:
+                self.done = True
+                self.cond.notify_all()
+            _claude_seen.pop(self.a["slug"], None)
+
+    def write(self, data: bytes) -> None:
+        if not self.done:
             try:
-                os.killpg(proc.pid, signal.SIGTERM)
+                os.write(self.master, data)
+            except OSError:
+                pass
+
+    def close(self) -> None:
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except Exception:
+            pass
+        try:
+            os.close(self.master)
+        except OSError:
+            pass
+        with self.cond:
+            self.buf = bytearray()
+            self.done = True
+            self.cond.notify_all()
+
+
+def connect_start(a: dict) -> None:
+    with _lock:
+        old = _connects.pop(a["slug"], None)
+    if old is not None:
+        old.close()
+    ensure_account(a)
+    c = Connect(a)
+    with _lock:
+        _connects[a["slug"]] = c
+
+
+def stop_agent(a: dict, wait: float = 12.0) -> None:
+    """Ask the gateway to finish and close its files, then make sure it is gone."""
+    rt = _runtime.get(a["slug"]) or {}
+    procs = [p for p in (rt.get("gateway"), rt.get("relay")) if _alive(p)]
+    for p in procs:
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+        except Exception:
+            pass
+    deadline = time.time() + wait
+    while time.time() < deadline and any(_alive(p) for p in procs):
+        time.sleep(0.2)
+    for p in procs:
+        if _alive(p):
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
             except Exception:
                 pass
+    # Terminals and jobs the workspace started live in their own sessions; end those too.
+    for sig in ("-TERM", "-KILL"):
+        subprocess.run(["pkill", sig, "-U", str(a["uid"])], capture_output=True)
+        time.sleep(0.3)
     rt.update(status="new", detail="", gateway=None, relay=None)
 
 
-def idle_reaper() -> None:
-    while True:
-        time.sleep(60)
+def keeper() -> None:
+    """Expires old browser sessions, restarts a workspace that died while its
+    leader was using it, and stops idle ones when that is switched on."""
+    while not _stopping.is_set():
+        time.sleep(5)
         now = time.time()
         with _lock:
             for k in [k for k, s in _sessions.items() if s["expires"] < now]:
                 _sessions.pop(k, None)
-            agents = list(_state["agents"].values())
-        if not IDLE_STOP_MINUTES:
-            continue
+            agents = [a for a in _state["agents"].values()]
+        with _lock:
+            stale = [k for k, c in _connects.items() if c.done or now - c.started > 900]
+            closing = [_connects.pop(k) for k in stale]
+        for c in closing:
+            c.close()
         for a in agents:
             rt = _runtime.get(a["slug"]) or {}
-            if rt.get("status") == "ready" and now - rt.get("last_seen", now) > IDLE_STOP_MINUTES * 60:
+            if rt.get("status") != "ready":
+                continue
+            if rt.get("gateway") is not None and not _alive(rt["gateway"]):
+                recent = [t for t in rt.get("restarts", []) if now - t < 600]
+                if len(recent) >= 3:
+                    log(f"{a['slug']}: stopped three times in ten minutes; leaving it down")
+                    rt.update(status="error", detail="the agent keeps stopping", restarts=recent)
+                    continue
+                log(f"{a['slug']}: gateway exited ({rt['gateway'].returncode}); restarting")
+                rt.update(status="starting", detail="Restarting your agent", restarts=recent + [now], gateway=None)
+                threading.Thread(target=start_agent, args=(a,), daemon=True).start()
+            elif IDLE_STOP_MINUTES and now - rt.get("last_seen", now) > IDLE_STOP_MINUTES * 60:
                 log(f"{a['slug']}: idle, stopping")
                 stop_agent(a)
 
@@ -442,7 +652,7 @@ main{{width:min(92vw,460px);padding:32px;border:1px solid #1d3a2f;border-radius:
 h1{{font-size:20px;margin:0 0 6px}} p{{margin:8px 0;color:#a9c4b7}} .who{{color:#34d399;font-weight:600}}
 .bar{{height:4px;border-radius:4px;background:#17332a;overflow:hidden;margin:18px 0 6px}}
 .bar i{{display:block;height:100%;width:40%;background:#34d399;animation:s 1.4s ease-in-out infinite}}
-@keyframes s{{0%{{margin-left:-40%}}100%{{margin-left:100%}}}}
+@keyframes s{{0%{{transform:translateX(-100%)}}100%{{transform:translateX(250%)}}}}
 button,a.btn{{display:inline-block;margin-top:14px;padding:10px 18px;border-radius:12px;border:0;
 background:#10b981;color:#fff;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}}
 small{{color:#6f8f80}}
@@ -458,14 +668,36 @@ def page(body: str, script: str = "") -> tuple:
     return doc.encode(), csp
 
 
+# The browser keeps the workspace's screen layout and open terminals in its own
+# storage, shared by everyone who uses that browser on this address. So:
+#  - a different person on the same browser starts from an empty store;
+#  - terminals remembered from before the agent last started are forgotten
+#    (they no longer exist, and the screen would only show an error for them).
+CONNECT_PAGE = (Path(__file__).resolve().parent / "pages" / "connect.html").read_text() \
+    if (Path(__file__).resolve().parent / "pages" / "connect.html").exists() else "__NAME__"
+
 START_JS = """
+const OWNER=%(owner)s;
+try{if(localStorage.getItem('eca.owner')!==OWNER){localStorage.clear();sessionStorage.clear();
+localStorage.setItem('eca.owner',OWNER);}}catch(e){}
+function freshTerminals(epoch){try{if(localStorage.getItem('eca.epoch')===String(epoch))return;
+for(const k of Object.keys(localStorage)){if(k==='hermes.desktop.terminals.v1'||k==='hermes.desktop.terminalTakeover'
+||k.indexOf('hermes.webapp.terminal.')===0)localStorage.removeItem(k);}
+localStorage.setItem('eca.epoch',String(epoch));}catch(e){}}
 const d=document.getElementById('d');let n=0;
 async function tick(){try{const r=await fetch('/_eca/status',{cache:'no-store',credentials:'same-origin'});
 if(r.status===401){location.replace('/_eca/signed-out');return}
-const s=await r.json();if(s.state==='ready'){location.replace('/_eca/open');return}
+const s=await r.json();if(s.state==='ready'){freshTerminals(s.epoch);
+location.replace(s.claude===false?'/_eca/connect':'/_eca/open');return}
 if(s.state==='error'){d.textContent='Something went wrong: '+s.detail+'. Go back to the portal and open your agent again.';return}
 d.textContent=s.detail||'Starting your agent';}catch(e){}
-if(++n<240)setTimeout(tick,1500)}tick();
+if(++n<300)setTimeout(tick,1200)}tick();
+"""
+
+SIGNED_OUT_JS = """
+const go=%(go)s, auto=%(auto)s;
+try{const k='eca.autotries',now=Date.now();let t=JSON.parse(sessionStorage.getItem(k)||'[]').filter(x=>now-x<60000);
+if(auto&&t.length<2){t.push(now);sessionStorage.setItem(k,JSON.stringify(t));location.replace(go);}}catch(e){}
 """
 
 
@@ -475,6 +707,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *a):  # request lines carry tickets; never log them
         pass
+
+    def address_string(self):
+        return "local"
 
     # helpers
     def _send(self, code: int, body: bytes = b"", ctype: str = "text/plain; charset=utf-8", headers: dict | None = None):
@@ -499,26 +734,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _json(self, code: int, payload: dict):
         self._send(code, json.dumps(payload).encode(), "application/json")
 
-    def _session(self):
-        raw = self.headers.get("Cookie") or ""
-        for part in raw.split(";"):
+    def _cookie_value(self) -> str:
+        for part in (self.headers.get("Cookie") or "").split(";"):
             k, _, v = part.strip().partition("=")
             if k == COOKIE and v:
-                with _lock:
-                    s = _sessions.get(_h(v))
-                if s and s["expires"] > time.time():
-                    return s
-        return None
+                return v
+        return ""
+
+    def _session(self):
+        v = self._cookie_value()
+        if not v:
+            return None
+        with _lock:
+            s = _sessions.get(_h(v))
+        return s if s and s["expires"] > time.time() else None
 
     def _agent(self, s):
         with _lock:
             return _state["agents"].get(s["emp"]) if s else None
 
-    def _who(self, a) -> str:
+    @staticmethod
+    def _name(a) -> str:
         raw = (a or {}).get("name") or (a or {}).get("username") or "you"
         if "," in raw:
             raw = " ".join(p.strip() for p in reversed(raw.split(",", 1)))
-        return html.escape(raw)
+        return raw
 
     # routes
     def do_GET(self):
@@ -531,38 +771,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/enter":
             return self._enter(parse_qs(url.query).get("ticket", [""])[0])
         if path == "/_eca/signed-out":
-            return self._page(200, "<h1>ECA Agent</h1><p>Open your agent from the ECA portal. "
-                                   "This page cannot be opened directly.</p>")
+            return self._signed_out(auto="bye" not in parse_qs(url.query))
         s = self._session()
-        if s is None:
-            return self._send(302, headers={"Location": "/_eca/signed-out"})
         a = self._agent(s)
-        if a is None:
+        if s is None or a is None:
+            # Reached without a valid sign-in (also where nginx sends a refused request).
             return self._send(302, headers={"Location": "/_eca/signed-out"})
+        if path == "/_eca/gate":
+            # nginx refused a workspace request although the browser is signed in: the agent is
+            # not ready (starting, restarting, or stopped). Bring it up and show the start page.
+            return self._send(302, headers={"Location": "/_eca/start"})
         if path == "/_eca/start":
             if not s["confirmed"]:
-                return self._confirm_page(a)
+                return self._page(200, f"<h1>Open this workspace?</h1><p>This link opens the agent workspace of "
+                                       f"<span class=who>{html.escape(self._name(a))}</span>.</p>"
+                                       "<p>If that is not you, close this page.</p>"
+                                       "<form method=post action=/_eca/confirm><button>Continue</button></form>")
             ensure_agent({"employee_number": s["emp"], "name": a.get("name"),
                           "username": a.get("username"), "role": a.get("role")})
-            return self._page(200, f"<h1>Starting your agent</h1><p>For <span class=who>{self._who(a)}</span></p>"
+            owner = json.dumps(_h("owner:" + s["emp"])[:20])
+            return self._page(200, f"<h1>Starting your agent</h1><p>For <span class=who>"
+                                   f"{html.escape(self._name(a))}</span></p>"
                                    "<div class=bar><i></i></div><p id=d>Preparing your workspace</p>"
-                                   "<small>The first start takes about a minute.</small>", START_JS)
+                                   "<small>The first start takes about a minute.</small>",
+                              START_JS % {"owner": owner})
         if path == "/_eca/status":
             rt = _runtime.get(a["slug"]) or {}
-            return self._json(200, {"state": rt.get("status", "new") if s["confirmed"] else "unconfirmed",
-                                    "detail": rt.get("detail", "")})
+            state = rt.get("status", "new") if s["confirmed"] else "unconfirmed"
+            return self._json(200, {"state": state, "detail": rt.get("detail", ""), "epoch": rt.get("epoch", 0),
+                                    "claude": claude_signed_in(a) if state == "ready" else None})
         if path == "/_eca/whoami":
             if not s["confirmed"]:
                 return self._send(401)
-            raw = a.get("name") or a.get("username") or ""
-            if "," in raw:
-                raw = " ".join(p.strip() for p in reversed(raw.split(",", 1)))
-            return self._json(200, {"name": raw, "claude_signed_in": claude_signed_in(a)})
-        if path == "/_eca/open":
+            return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a)})
+        if path == "/_eca/connect":
             if not s["confirmed"]:
                 return self._send(302, headers={"Location": "/_eca/start"})
+            return self._connect_page(a)
+        if path == "/_eca/connect/stream":
+            if not s["confirmed"]:
+                return self._send(401)
+            return self._connect_stream(a)
+        if path == "/_eca/open":
             rt = _runtime.get(a["slug"]) or {}
-            if rt.get("status") != "ready":
+            if not s["confirmed"] or rt.get("status") != "ready":
                 return self._send(302, headers={"Location": "/_eca/start"})
             try:
                 target = mint_launch_path(a)
@@ -584,12 +836,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 token = str(json.loads(raw.decode() or "{}").get("token") or "")
             except Exception:
                 token = ""
+            found = None
             if len(token) >= 20:
                 digest = _h(token)
                 with _lock:
                     for emp, a in _state["agents"].items():
                         if a.get("token_sha256") and secrets.compare_digest(a["token_sha256"], digest):
-                            return self._json(200, {"employee_number": emp})
+                            found = emp
+            if found:
+                return self._json(200, {"employee_number": found})
             return self._json(404, {"error": "unknown token"})
         s = self._session()
         if s is None:
@@ -597,38 +852,119 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/_eca/confirm":
             s["confirmed"] = True
             return self._send(303, headers={"Location": "/_eca/start"})
+        if path in ("/_eca/connect/start", "/_eca/connect/input"):
+            a = self._agent(s)
+            # Only this site's own pages may drive the sign-in box.
+            origin = self.headers.get("Origin") or ""
+            if a is None or not s["confirmed"] or origin != f"https://{self.headers.get('Host', '')}":
+                return self._send(403, b"refused")
+            if path.endswith("/start"):
+                try:
+                    connect_start(a)
+                except Exception as exc:
+                    log(f"{a['slug']}: could not start the Claude sign-in: {type(exc).__name__}")
+                    return self._send(500, b"could not start")
+                return self._json(200, {"cols": CONNECT_COLS, "rows": CONNECT_ROWS})
+            c = _connects.get(a["slug"])
+            if c is None or c.done:
+                return self._send(409, b"not running")
+            c.write(raw[:4096])
+            return self._send(204)
         if path == "/_eca/sign-out":
+            a = self._agent(s)
             with _lock:
                 for k in [k for k, v in _sessions.items() if v is s]:
                     _sessions.pop(k, None)
-            return self._send(303, headers={"Location": "/_eca/signed-out",
-                                            "Set-Cookie": f"{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0"})
+            if a is not None:
+                # Also end every browser tab's hold on the workspace itself, so a copy left in
+                # another tab or on a shared computer stops working.
+                threading.Thread(target=lambda: run_as(a, [HERMES, "webapp", "--sign-out"], timeout=90),
+                                 daemon=True).start()
+            return self._send(303, headers={
+                "Location": "/_eca/signed-out?bye=1",
+                "Clear-Site-Data": '"storage"',
+                "Set-Cookie": f"{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0"})
         return self._send(404, b"not found")
 
-    def _confirm_page(self, a):
-        return self._page(200, f"<h1>Open this workspace?</h1><p>This link opens the agent workspace of "
-                               f"<span class=who>{self._who(a)}</span>.</p><p>If that is not you, close this page.</p>"
-                               "<form method=post action=/_eca/confirm><button>Continue</button></form>")
+    def _connect_page(self, a):
+        doc = CONNECT_PAGE.replace("__NAME__", html.escape(self._name(a))) \
+            .replace("__COLS__", str(CONNECT_COLS)).replace("__ROWS__", str(CONNECT_ROWS))
+        csp = ("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; "
+               "font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+        self._send(200, doc.encode(), "text/html; charset=utf-8", {"Content-Security-Policy": csp})
+
+    def _connect_stream(self, a):
+        """The sign-in program's screen, sent as it is drawn (server-sent events)."""
+        c = _connects.get(a["slug"])
+        if c is None:
+            return self._send(404, b"not running")
+        try:
+            pos = int(self.headers.get("Last-Event-ID") or 0)
+        except ValueError:
+            pos = 0
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            while not _stopping.is_set():
+                with c.cond:
+                    if pos >= c.base + len(c.buf) and not c.done:
+                        c.cond.wait(timeout=10)
+                    pos = max(pos, c.base)
+                    data = bytes(c.buf[pos - c.base:])
+                    done = c.done
+                if data:
+                    pos += len(data)
+                    self.wfile.write(b"id: %d\ndata: %s\n\n" % (pos, base64.b64encode(data)))
+                elif done:
+                    self.wfile.write(b"event: end\ndata: 1\n\n")
+                    self.wfile.flush()
+                    break
+                else:
+                    self.wfile.write(b": waiting\n\n")
+                self.wfile.flush()
+        except OSError:
+            pass
+
+    def _signed_out(self, auto: bool):
+        go = f"{PORTAL_URL}/portal/agent?auto=1"
+        body = ("<h1>ECA Agent</h1><p>Your agent opens from the ECA portal, with your portal sign-in.</p>"
+                f'<a class=btn href="{html.escape(go)}" rel="noreferrer">Open from the portal</a>')
+        self._page(200, body, SIGNED_OUT_JS % {"go": json.dumps(go), "auto": "true" if auto else "false"})
 
     def _enter(self, ticket: str):
         identity = redeem_ticket(ticket) if 20 <= len(ticket) <= 200 else None
         if not identity or not identity.get("employee_number"):
             return self._page(403, "<h1>This link has expired</h1><p>Agent links work once and for a short time. "
                                    "Go back to the ECA portal and open your agent again.</p>")
-        a = ensure_agent(identity)
+        emp = str(identity["employee_number"])
+        try:
+            a = ensure_agent(identity)
+        except Exception as exc:
+            log(f"could not prepare a workspace: {exc}")
+            return self._page(500, "<h1>Could not prepare your workspace</h1><p>Please tell Ephriam.</p>")
         referer = self.headers.get("Referer") or ""
         origin = "{0.scheme}://{0.netloc}".format(urlsplit(referer)) if referer else ""
+        previous = self._session()
         value = secrets.token_urlsafe(40)
         with _lock:
-            _sessions[_h(value)] = {"emp": str(identity["employee_number"]),
-                                    "expires": time.time() + SESSION_HOURS * 3600,
+            old = self._cookie_value()
+            if old:
+                _sessions.pop(_h(old), None)
+            _sessions[_h(value)] = {"emp": emp, "expires": time.time() + SESSION_HOURS * 3600,
                                     # A link followed from anywhere but the portal asks first, so nobody
                                     # can be dropped into someone else's workspace by a pasted link.
-                                    "confirmed": origin in PORTAL_ORIGINS, "portal": origin}
+                                    "confirmed": origin in PORTAL_ORIGINS}
         log(f"{a['slug']}: signed in from the portal")
-        self._send(303, headers={
-            "Location": "/_eca/start",
-            "Set-Cookie": f"{COOKIE}={value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}"})
+        headers = {"Location": "/_eca/start",
+                   "Set-Cookie": f"{COOKIE}={value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}"}
+        if previous is not None and previous["emp"] != emp:
+            headers["Clear-Site-Data"] = '"storage"'     # another person was signed in on this browser
+        self._send(303, headers=headers)
 
     def _auth(self):
         """nginx asks, for every request to a workspace, whose it is."""
@@ -639,25 +975,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
         rt = _runtime.get(a["slug"]) or {}
         if rt.get("status") != "ready":
             return self._send(401)
-        now = time.time()
-        if now - rt.get("listener_ok_at", 0) > 5:
-            owner = listener_uid(a["port"])
-            if owner != a["uid"] and (owner is not None or webapp_state(a["port"]) == "down"):
-                rt.update(status="error", detail="the workspace stopped")
-                return self._send(401)
-            rt["listener_ok_at"] = now
-        rt["last_seen"] = now
+        # Checked on every request: the port must be held by this leader's own account, so a
+        # process of another account that grabbed the port can never be handed their traffic.
+        if listener_uid(a["port"]) != a["uid"]:
+            if rt.get("gateway") is None or not _alive(rt["gateway"]):
+                rt.update(status="error", detail="the agent stopped")
+            return self._send(401)
+        rt["last_seen"] = time.time()
         self._send(200, headers={"X-Agent-Slug": a["slug"], "X-Agent-Port": str(a["port"])})
 
 
-def main() -> None:
-    for d in (HOMES, STATE_FILE.parent, RUN / "a", RUN / "rt"):
+class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+    def get_request(self):
+        request, _ = super().get_request()
+        return request, ("local", 0)
+
+
+class TcpServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+
+def make_server():
+    if SUP_TCP_PORT:
+        return TcpServer(("127.0.0.1", SUP_TCP_PORT), Handler)
+    d = SUP_SOCK.parent
+    d.mkdir(parents=True, exist_ok=True)
+    os.chown(d, 0, WEB_GID)
+    os.chmod(d, 0o750)          # nginx may enter; a leader's processes may not
+    if SUP_SOCK.exists() or SUP_SOCK.is_symlink():
+        SUP_SOCK.unlink()
+    server = UnixServer(str(SUP_SOCK), Handler)
+    os.chown(SUP_SOCK, 0, WEB_GID)
+    os.chmod(SUP_SOCK, 0o660)
+    return server
+
+
+def prepare_dirs() -> None:
+    for d in (DATA, HOMES, RUN, RUN / "a", RUN / "rt", RUN / "tmp"):
         d.mkdir(parents=True, exist_ok=True)
-    os.chmod(DATA, 0o711)
-    os.chmod(HOMES, 0o711)
-    os.chmod(RUN, 0o711)
-    os.chmod(RUN / "a", 0o711)
-    os.chmod(RUN / "rt", 0o711)
+        os.chown(d, 0, 0)
+        os.chmod(d, 0o711)      # may be passed through, never listed
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chown(STATE_FILE.parent, 0, 0)
+    os.chmod(STATE_FILE.parent, 0o700)
+
+
+def main() -> None:
+    prepare_dirs()
     load_state()
     with _lock:
         for a in _state["agents"].values():
@@ -665,12 +1031,27 @@ def main() -> None:
                 ensure_account(a)
             except Exception as exc:
                 log(f"{a.get('slug')}: could not restore the account: {exc}")
-    threading.Thread(target=idle_reaper, daemon=True).start()
-    server = http.server.ThreadingHTTPServer((SUP_HOST, SUP_PORT), Handler)
-    server.daemon_threads = True
-    log(f"listening on {SUP_HOST}:{SUP_PORT}; backend {BACKEND}; {len(_state['agents'])} known workspaces")
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    server.serve_forever()
+    server = make_server()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=keeper, daemon=True).start()
+    log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; data in {DATA}"
+        f"{' (on its own disk)' if os.path.ismount(DATA) else ' (NOT on a disk: lost at restart)'}")
+    if SELFTEST:
+        import selftest          # noqa: PLC0415  (only on request; see selftest.py)
+        threading.Thread(target=selftest.run, args=(sys.modules[__name__],), daemon=True).start()
+    signal.signal(signal.SIGTERM, lambda *_: _stopping.set())
+    signal.signal(signal.SIGINT, lambda *_: _stopping.set())
+    while not _stopping.is_set():
+        time.sleep(0.5)
+    log("stopping: closing workspaces")
+    with _lock:
+        agents = list(_state["agents"].values())
+    threads = [threading.Thread(target=stop_agent, args=(a,)) for a in agents]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(20)
+    log("stopped")
 
 
 if __name__ == "__main__":

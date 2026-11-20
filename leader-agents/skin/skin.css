@@ -38,16 +38,22 @@ html {
   font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace;
   background: #06110d; border: 1px solid #1d3a2f; border-radius: 6px; padding: 1px 6px; color: #d1fae5;
 }
-#eca-banner ol { margin: 6px 0 0; padding-left: 18px; color: #a9c4b7; }
-#eca-banner .eca-actions { display: flex; flex-direction: column; gap: 6px; flex: none; }
+#eca-banner .eca-sub { color: #a9c4b7; margin-top: 2px; }
+#eca-banner { align-items: center; justify-content: space-between; }
+#eca-banner .eca-actions { display: flex; gap: 8px; flex: none; }
 #eca-banner button {
   font: inherit; font-weight: 600; cursor: pointer; border-radius: 9px; padding: 6px 12px;
   border: 1px solid #1f6f55; background: #10b981; color: #fff;
 }
 #eca-banner button.eca-quiet { background: transparent; color: #a9c4b7; font-weight: 500; }
 #eca-chip {
-  position: fixed; z-index: 2147482000; right: 150px; top: 5px;
+  position: fixed; z-index: 2147482000; right: 118px; top: 4px;
+  display: flex; align-items: center; gap: 8px;
   font: 11px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em;
-  color: #6ee7b7; background: #0c1f18; border: 1px solid #1d3a2f; border-radius: 999px; padding: 4px 9px;
-  pointer-events: none; opacity: .9;
+  color: #6ee7b7; background: #0c1f18; border: 1px solid #1d3a2f; border-radius: 999px; padding: 3px 4px 3px 10px;
 }
+#eca-chip button {
+  font: inherit; letter-spacing: 0; cursor: pointer; color: #a9c4b7; background: transparent;
+  border: 1px solid #1d3a2f; border-radius: 999px; padding: 3px 8px;
+}
+#eca-chip button:hover { color: #fff; border-color: #1f6f55; }
