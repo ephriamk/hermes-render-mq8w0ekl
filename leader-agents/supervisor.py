@@ -86,7 +86,9 @@ DEFAULT_MODEL = os.environ.get("ECA_DEFAULT_MODEL", "sonnet")
 # signed in to their ChatGPT plan by them (device code). Listed by employee number.
 CODEX = "/usr/local/bin/codex"
 CODEX_EMPLOYEES = {e.strip() for e in os.environ.get("ECA_CODEX_EMPLOYEES", "").split(",") if e.strip()}
-CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-5.4")
+# The model ChatGPT plans accept through Codex (gpt-5.4 is refused: "not supported when using
+# Codex with a ChatGPT account", 2026-11-19); this is Codex's own default.
+CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-6.2-sol")
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
@@ -345,7 +347,8 @@ def provision(a: dict, bare: bool = False) -> None:
     writes = []
     eng = "bare" if bare else engine(a)
     if not a.get("provisioned") or f"port: {a['port']}" not in cfg_text or "enabled: true" not in cfg_text \
-            or a.get("engine", "claude") != eng:
+            or a.get("engine", "claude") != eng \
+            or (eng == "codex" and f"default: {CODEX_MODEL}" not in cfg_text):
         # First set-up, or the Webapp block was removed: without it the workspace cannot open.
         writes.append({"op": "write", "path": cfg, "content": _config_text(a, bare), "mode": 0o600})
     # The agent's standing brief. Written once, and refreshed when ECA's version of it changes,
