@@ -66,7 +66,7 @@ http {
     location = / {
       include /opt/eca/nginx-workspace.inc;
       proxy_set_header Accept-Encoding "";
-      sub_filter '</head>' '<link rel="stylesheet" href="/_eca/static/skin.css"><script src="/_eca/static/skin.js"></script></head>';
+      sub_filter '</head>' '<link rel="stylesheet" href="/_eca/static/skin.css"><script src="/_eca/static/skin.js"></script><script src="/_eca/static/widgets.js"></script></head>';
       sub_filter_once on;
       proxy_pass http://unix:/run/eca/a/$agent_slug/web.sock;
     }
