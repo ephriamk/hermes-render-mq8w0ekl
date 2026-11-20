@@ -10,7 +10,9 @@ account with its own home. This process (root, standard library only):
     and a small relay that runs AS THE LEADER, so the Webapp sees a local
     connection from its own account, exactly as on a personal machine;
   * tells nginx, per request, which leader a browser belongs to (/_auth);
-  * vouches for agent tokens when the ECA backend asks (/internal/verify).
+  * hands each leader's workspace the ECA data token the backend issued them
+    when their ticket was redeemed (the backend, not this server, decides who
+    a token belongs to).
 
 Rules this file keeps (each one closes a way for work to cross between people):
 
@@ -319,14 +321,16 @@ def provision(a: dict, bare: bool = False) -> None:
         writes.append({"op": "write", "path": soul, "mode": 0o600, "content": soul_text})
         writes.append({"op": "write", "path": mark, "content": _h(soul_text), "mode": 0o600})
     if not bare:
-        env_text = got[1].get("text") or ""
-        m = re.search(r"^ECA_GATEWAY_TOKEN=(\S+)$", env_text, re.M)
-        if not (m and a.get("token_sha256") and secrets.compare_digest(_h(m.group(1)), a["token_sha256"])):
-            token = secrets.token_urlsafe(40)
+        # The ECA data token is issued by the backend at ticket redemption and handed over
+        # once, in memory. This server keeps only when it was issued, never the token.
+        token = _pending_tokens.pop(a["slug"], None)
+        if token:
+            env_text = got[1].get("text") or ""
             lines = [ln for ln in env_text.splitlines() if not ln.startswith("ECA_GATEWAY_TOKEN=")]
             lines.append(f"ECA_GATEWAY_TOKEN={token}")
             writes.append({"op": "write", "path": env, "content": "\n".join(lines) + "\n", "mode": 0o600})
-            a["token_sha256"] = _h(token)
+            a["token_issued"] = int(time.time())
+            a.pop("token_sha256", None)
     if writes:
         for res in home_ops(a, writes):
             if not res.get("ok"):
@@ -442,6 +446,17 @@ def start_agent(a: dict, bare: bool = False) -> None:
         rt.update(status="error", detail=str(exc)[:200])
 
 
+TOKEN_REFRESH_DAYS = 20      # the backend's tokens last 30 days
+_pending_tokens: dict = {}   # slug -> token waiting to be written into the home (memory only)
+
+
+def needs_token(emp: str) -> bool:
+    with _lock:
+        a = _state["agents"].get(str(emp))
+    return a is None or not a.get("token_issued") or \
+        time.time() - a["token_issued"] > TOKEN_REFRESH_DAYS * 86400
+
+
 def ensure_agent(identity: dict) -> dict:
     emp = str(identity["employee_number"])
     with _lock:
@@ -458,6 +473,17 @@ def ensure_agent(identity: dict) -> dict:
         a.update(name=identity.get("name"), username=identity.get("username"), role=identity.get("role"))
         save_state()
         rt = _runtime.setdefault(a["slug"], {"status": "new", "detail": ""})
+        new_token = identity.get("agent_token")
+        if new_token:
+            _pending_tokens[a["slug"]] = new_token
+            if rt.get("status") == "ready":
+                # The running agent read its token at start: restart it so it uses the new one.
+                rt.update(status="restarting", detail="Updating your agent")
+                def _restart(a=a):
+                    stop_agent(a)
+                    start_agent(a)
+                threading.Thread(target=_restart, daemon=True).start()
+                return a
         healthy = rt.get("status") == "ready" and webapp_state(a["port"]) == "ready"
         if not healthy and rt.get("status") != "starting":
             rt.update(status="starting", detail="Preparing your workspace")
@@ -650,10 +676,13 @@ def keeper() -> None:
 
 # ───────────────────────────── backend ─────────────────────────────
 
-def redeem_ticket(ticket: str):
+def redeem_ticket(ticket: str, want_token: bool = False):
+    with _lock:
+        held = [emp for emp in _state["agents"] if not needs_token(emp)]
     req = urllib.request.Request(
         f"{BACKEND}/api/intel/tickets/redeem", method="POST",
-        data=json.dumps({"ticket": ticket}).encode(), headers={"Content-Type": "application/json"})
+        data=json.dumps({"ticket": ticket, "want_token": want_token, "held": held}).encode(),
+        headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.loads(r.read().decode())
@@ -856,21 +885,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         length = min(int(self.headers.get("Content-Length") or 0), 8192)
         raw = self.rfile.read(length) if length else b""
-        if path == "/internal/verify":
-            try:
-                token = str(json.loads(raw.decode() or "{}").get("token") or "")
-            except Exception:
-                token = ""
-            found = None
-            if len(token) >= 20:
-                digest = _h(token)
-                with _lock:
-                    for emp, a in _state["agents"].items():
-                        if a.get("token_sha256") and secrets.compare_digest(a["token_sha256"], digest):
-                            found = emp
-            if found:
-                return self._json(200, {"employee_number": found})
-            return self._json(404, {"error": "unknown token"})
         s = self._session()
         if s is None:
             return self._send(401, b"signed out")
@@ -962,7 +976,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._page(200, body, SIGNED_OUT_JS % {"go": json.dumps(go), "auto": "true" if auto else "false"})
 
     def _enter(self, ticket: str):
-        identity = redeem_ticket(ticket) if 20 <= len(ticket) <= 200 else None
+        # The ticket says who it is only once redeemed, so tell the backend whose fresh
+        # tokens this server already holds; it issues one only if the ticket's own person
+        # is not among them (retiring that person's earlier token).
+        identity = redeem_ticket(ticket, want_token=True) if 20 <= len(ticket) <= 200 else None
         if not identity or not identity.get("employee_number"):
             return self._page(403, "<h1>This link has expired</h1><p>Agent links work once and for a short time. "
                                    "Go back to the ECA portal and open your agent again.</p>")
