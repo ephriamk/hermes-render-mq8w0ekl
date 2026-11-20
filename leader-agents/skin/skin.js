@@ -138,9 +138,26 @@
     m.appendChild(el("span", null, "ECA Agent"));
     head.insertBefore(m, head.firstChild);
   }
-  function brand() { strip(); }
+  // The engine's own ChatGPT sign-in box: ECA's Connect page does the same sign-in in the
+  // ChatGPT program itself, which the engine then reuses. Send the person there (once per
+  // ten minutes, so a failed hand-over can never loop).
+  function engineSignIn() {
+    var dialogs = document.querySelectorAll('[role="dialog"]');
+    for (var i = 0; i < dialogs.length; i++) {
+      if (/Sign in with ChatGPT/.test(dialogs[i].textContent || "")) {
+        try {
+          var last = Number(sessionStorage.getItem("eca.connectHop") || 0);
+          if (Date.now() - last < 600000) return;
+          sessionStorage.setItem("eca.connectHop", String(Date.now()));
+        } catch (e) {}
+        location.assign("/_eca/connect");
+        return;
+      }
+    }
+  }
+  function brand() { strip(); engineSignIn(); }
   var queued = false;
-  function later() { if (queued) return; queued = true; requestAnimationFrame(function () { queued = false; strip(); declineStats(); }); }
+  function later() { if (queued) return; queued = true; requestAnimationFrame(function () { queued = false; strip(); declineStats(); engineSignIn(); }); }
   try { new MutationObserver(later).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); } catch (e) {}
   window.addEventListener("hashchange", later);
   // The engine's own "sign in" prompts lead to ECA's Connect page instead of its set-up screens.

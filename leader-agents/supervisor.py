@@ -599,10 +599,13 @@ def claude_signed_in(a: dict):
             r = run_as(a, [CODEX, "login", "status"], timeout=20)
             out = (r.stdout or "") + (r.stderr or "")
             value = r.returncode == 0 and "logged in" in out.lower() and "not logged in" not in out.lower()
+            if not value:
+                log(f"{a['slug']}: ChatGPT not signed in (codex login status rc={r.returncode}: {out.strip()[:80]!r})")
         else:
             r = run_as(a, [CLAUDE, "auth", "status"], timeout=20)
             value = bool(json.loads(r.stdout or "{}").get("loggedIn"))
-    except Exception:
+    except Exception as exc:
+        log(f"{a['slug']}: could not check the AI sign-in ({type(exc).__name__})")
         value = None
     _claude_seen[a["slug"]] = (now, value)
     return value
