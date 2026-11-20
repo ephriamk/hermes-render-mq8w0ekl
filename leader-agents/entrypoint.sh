@@ -4,7 +4,7 @@
 set -u
 PORT="${PORT:-10000}"
 if [ "$(id -u)" != 0 ]; then echo "[entrypoint] must start as root (it creates one Linux account per leader)"; exit 1; fi
-mkdir -p /run/eca/diag /srv/eca
+mkdir -p /run/eca /srv/eca
 sed "s/__PORT__/${PORT}/" /opt/eca/nginx.conf.template > /run/eca/nginx.conf
 
 /opt/hermes/.venv/bin/python -u /opt/eca/supervisor.py &
@@ -17,12 +17,6 @@ done
 nginx -c /run/eca/nginx.conf -g 'daemon off;' &
 NGX=$!
 echo "[entrypoint] supervisor pid $SUP, nginx pid $NGX, port $PORT"
-
-if [ -f /opt/eca/discover.sh ]; then
-  NAME="d-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n').txt"
-  echo "[discover] report-file ${NAME}"
-  ( sh /opt/eca/discover.sh > "/run/eca/diag/${NAME}.part" 2>&1; mv "/run/eca/diag/${NAME}.part" "/run/eca/diag/${NAME}"; echo "[discover] ===== DONE ${NAME} =====" ) &
-fi
 
 trap 'kill "$SUP" "$NGX" 2>/dev/null; exit 0' TERM INT
 while kill -0 "$SUP" 2>/dev/null && kill -0 "$NGX" 2>/dev/null; do sleep 2; done
