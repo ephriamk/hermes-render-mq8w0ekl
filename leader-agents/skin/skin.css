@@ -57,3 +57,17 @@ html {
   border: 1px solid #1d3a2f; border-radius: 999px; padding: 3px 8px;
 }
 #eca-chip button:hover { color: #fff; border-color: #1f6f55; }
+
+/* ── A simpler screen ─────────────────────────────────────────────────────
+   Hidden: the engine's settings and layout tools, its profile switcher, its
+   bots and voice controls, and its status line with version numbers. */
+footer[data-slot="statusbar"],
+[data-slot="profile-rail"],
+button[aria-label="Open settings"],
+button[aria-label="Layout editor"],
+button[aria-label="Swap sidebar sides"],
+[role="tab"][aria-label="Bots"],
+button[aria-label="Voice dictation"],
+button[aria-label="Start voice conversation"],
+button[aria-label="Voice chat engine"],
+[data-eca-hide] { display: none !important; }
