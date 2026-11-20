@@ -12,9 +12,6 @@ run() {
 }
 sleep 60
 run "codex login status"
-run "ls -la \$HERMES_HOME/logs 2>/dev/null"
-run "for f in \$HERMES_HOME/logs/*.log; do echo == \$f; grep -iE 'error|exception|traceback|failed|denied|sandbox|401|403|429|model' \$f | tail -n 25; done"
-run "timeout 120 codex exec --skip-git-repo-check 'Reply with exactly: ok' </dev/null"
-run "timeout 60 codex exec --skip-git-repo-check -m gpt-5.4 'Reply with exactly: ok' </dev/null"
-run "sed -n '1,40p' \$CODEX_HOME/config.toml"
+run "grep -E 'default:|provider:|openai_runtime' \$HERMES_HOME/config.yaml"
+run "timeout 180 codex exec --skip-git-repo-check 'Use the eca MCP tool eca_whoami, then eca_all_clubs for yesterday. Reply in two lines: the clubs you can see, and each club total_cash_mtd.' </dev/null"
 echo "[diag] ===== DONE ====="
