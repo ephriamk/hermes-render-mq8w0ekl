@@ -6,7 +6,7 @@ FROM ${HERMES_IMAGE}
 
 USER root
 RUN apt-get update \
- && apt-get install -y --no-install-recommends nginx-light socat openssl procps iproute2 curl ca-certificates util-linux \
+ && apt-get install -y --no-install-recommends nginx-light socat dumb-init openssl procps iproute2 curl ca-certificates util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # The unmodified Claude Code program. Each leader signs in to it themselves,
@@ -25,6 +25,8 @@ RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf
 
-# tini reaps the processes the workspaces leave behind.
-ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/bin/sh", "/opt/eca/entrypoint.sh"]
+# A plain init that reaps the processes the workspaces leave behind. (The
+# image's own /usr/bin/tini is a shim for Hermes's s6 start-up, which sets up
+# the stock single-user home and drops root; neither is wanted here.)
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/bin/sh", "/opt/eca/entrypoint.sh"]
 CMD []

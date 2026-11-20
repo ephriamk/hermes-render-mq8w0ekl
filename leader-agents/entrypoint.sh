@@ -3,6 +3,7 @@
 # stops, so the host restarts it.
 set -u
 PORT="${PORT:-10000}"
+if [ "$(id -u)" != 0 ]; then echo "[entrypoint] must start as root (it creates one Linux account per leader)"; exit 1; fi
 mkdir -p /run/eca/diag /srv/eca
 sed "s/__PORT__/${PORT}/" /opt/eca/nginx.conf.template > /run/eca/nginx.conf
 

@@ -156,7 +156,7 @@ def ensure_account(a: dict) -> None:
 
 SOUL = """# ECA Agent
 
-You are the ECA agent for {name} ({role}) at Eastside Champions Athletics, a
+You are the ECA agent for {name} ({role}) at Emerald City Athletics (ECA), a
 group of four fitness clubs: Everett (06902), Wallingford (06904), Columbia
 (40059) and Ballinger (40054).
 
