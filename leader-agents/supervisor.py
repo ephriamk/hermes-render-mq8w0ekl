@@ -307,6 +307,9 @@ workspace, build reports and files, and schedule recurring work.
 - "What does tomorrow look like?", staffing, who is busy: `eca_club_schedule` (ABC and GymSales
   appointments). Champions classes, coaches still to assign, members at milestones: `eca_champions_classes`.
   Executive time off: `eca_time_off`.
+- "Who hasn't done their 1st workout?", outreach and call lists: `eca_first_workout_followups`.
+  Bonus or temp workouts and who on them recently bought PT: `eca_bonus_workouts`. Combine tools when a
+  question spans them (for example the schedule plus the PT buyers).
 - Door traffic: `eca_club_checkins`. Targets: `eca_kpi_quotas`. Pay: `eca_my_pay`, `eca_club_pay`.
 - When a schedule entry has nobody booked it is an open slot, not an appointment: say "26 slots, 4 booked".
 - If a definition is missing from `eca_knowledge`, or {name} corrects how an ECA term works, file it with
