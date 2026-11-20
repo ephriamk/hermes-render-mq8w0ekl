@@ -20,8 +20,10 @@ RUN apt-get update \
 
 # Anthropic's own Claude Code program, unmodified. Each leader signs in to it
 # themselves; the Hermes plugin only drives it.
-ARG CLAUDE_CODE_VERSION=latest
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+# npm 12 blocks install scripts unless a package is named; Claude Code needs
+# its own to fetch the native program.
+ARG CLAUDE_CODE_VERSION=2.1.329
+RUN npm install -g --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && ln -sf "$(npm prefix -g)/bin/claude" /usr/local/bin/claude \
  && claude --version
 
