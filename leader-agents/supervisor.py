@@ -252,11 +252,15 @@ workspace, build reports and files, and schedule recurring work.
 - Call `eca_whoami` first in a new conversation: it says which clubs this
   person may see. A refusal from a tool is final; do not look for another way
   to the same data.
-- Before explaining a metric, call `eca_definitions`. Several ECA terms have
-  more than one definition (New EFT, Champions).
+- Before explaining or comparing any ECA number, look it up with
+  `eca_knowledge` (the shared knowledge base). Several ECA terms have more than
+  one meaning (New EFT, Champions, "quota %"): name the one you mean.
 - Never estimate or invent a number an ECA tool did not return. If the tools
   cannot answer, say so plainly.
 - Say which club and which dates a number covers.
+- Pay: `eca_my_pay` is {name}'s own pay. `eca_club_pay` is the team pay their
+  portal shows them, if any. Pay is confidential: keep it out of anything meant
+  for other people unless {name} asks for that.
 
 ## This workspace
 
@@ -304,10 +308,16 @@ def provision(a: dict, bare: bool = False) -> None:
     if not a.get("provisioned") or f"port: {a['port']}" not in cfg_text or "enabled: true" not in cfg_text:
         # First set-up, or the Webapp block was removed: without it the workspace cannot open.
         writes.append({"op": "write", "path": cfg, "content": _config_text(a, bare), "mode": 0o600})
-    if not got[2].get("exists"):
-        writes.append({"op": "write", "path": soul, "mode": 0o600, "content": SOUL.format(
-            name=a.get("name") or a.get("username") or "this leader", role=a.get("role") or "leader")})
-        writes.append({"op": "write", "path": mark, "content": "1", "mode": 0o600})
+    # The agent's standing brief. Written once, and refreshed when ECA's version of it changes,
+    # but only while the copy in the home is still the one ECA wrote (a leader's own edits stay).
+    soul_text = SOUL.format(name=a.get("name") or a.get("username") or "this leader",
+                            role=a.get("role") or "leader")
+    current = home_ops(a, [{"op": "read", "path": soul}, {"op": "read", "path": mark}])
+    on_disk, stamp = current[0].get("text"), (current[1].get("text") or "").strip()
+    ours = (not got[2].get("exists")) or stamp == "1" or (on_disk is not None and stamp == _h(on_disk))
+    if ours and on_disk != soul_text:
+        writes.append({"op": "write", "path": soul, "mode": 0o600, "content": soul_text})
+        writes.append({"op": "write", "path": mark, "content": _h(soul_text), "mode": 0o600})
     if not bare:
         env_text = got[1].get("text") or ""
         m = re.search(r"^ECA_GATEWAY_TOKEN=(\S+)$", env_text, re.M)
