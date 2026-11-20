@@ -24,6 +24,13 @@ RUN mkdir -p /tmp/xt /opt/eca-vendor && cd /tmp/xt \
  && cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css /opt/eca-vendor/ \
  && chmod -R a+rX /opt/eca-vendor && rm -rf /tmp/xt
 
+# OpenAI's Codex program, for leaders who use ChatGPT instead of Claude. Each
+# leader signs in to it themselves (codex login --device-auth).
+ARG CODEX_VERSION=0.169.1
+RUN npm install -g --allow-scripts=@openai/codex "@openai/codex@${CODEX_VERSION}" \
+ && ln -sf "$(npm prefix -g)/bin/codex" /usr/local/bin/codex \
+ && codex --version
+
 COPY --chown=root:root . /opt/eca/
 RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
  && chmod -R a+rX /opt/eca/skin \
