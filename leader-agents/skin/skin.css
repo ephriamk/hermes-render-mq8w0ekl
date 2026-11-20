@@ -1,0 +1,3 @@
+/* ECA look for the workspace. Kept small on purpose; grown once the real
+   screens have been seen. */
+:root { --eca-accent: #10b981; }
