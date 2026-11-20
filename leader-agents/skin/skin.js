@@ -204,6 +204,18 @@
       var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect " + service);
       re.addEventListener("click", function () { location.assign("/_eca/connect"); });
       c.appendChild(re);
+      var dis = el("button", { type: "button", "class": "eca-disconnect", title: "Remove your AI sign-in from this workspace" }, "Disconnect AI");
+      dis.addEventListener("click", function () {
+        if (!confirm("Disconnect your " + service + " sign-in from your ECA agent? Your chats and files stay. You can connect again any time.")) return;
+        fetch("/_eca/disconnect-ai", { method: "POST", credentials: "same-origin" })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d) { alert("Could not disconnect. Reload and try again."); return; }
+            alert(service + " is disconnected from your ECA agent." + (d.revoke_note ? "\n\n" + d.revoke_note : ""));
+            location.assign("/_eca/connect");
+          });
+      });
+      c.appendChild(dis);
       var out = el("button", { type: "button", "aria-label": "Sign out of your agent on this browser" }, "Sign out");
       out.addEventListener("click", signOut);
       c.appendChild(out);

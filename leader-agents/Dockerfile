@@ -17,6 +17,10 @@ ARG CLAUDE_CODE_VERSION=2.1.329
 RUN npm install -g --allow-scripts=@anthropic-ai/claude-code "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && ln -sf "$(npm prefix -g)/bin/claude" /usr/local/bin/claude \
  && claude --version
+# Managed settings for every leader's Claude Code: the agent must not reach apps the person connected
+# on claude.ai (Gmail, Drive...) through their Claude sign-in; ECA's own tools are the way in.
+RUN mkdir -p /etc/claude-code && printf '{\n  "disableClaudeAiConnectors": true\n}\n' > /etc/claude-code/managed-settings.json \
+ && chmod 0644 /etc/claude-code/managed-settings.json
 
 # The terminal box used by the "Connect Claude" page (xterm.js, MIT).
 RUN mkdir -p /tmp/xt /opt/eca-vendor && cd /tmp/xt \

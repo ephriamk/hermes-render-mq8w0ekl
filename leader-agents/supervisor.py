@@ -1178,6 +1178,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(409, b"not running")
             c.write(raw[:4096])
             return self._send(204)
+        if path == "/_eca/disconnect-ai":
+            # Disconnect the person's Claude or ChatGPT sign-in from this workspace (review 11-20).
+            # ChatGPT: `codex logout` revokes the sign-in at OpenAI, then deletes the file; the engine's
+            # copy is deleted too. Claude: `claude auth logout` deletes the local file; the page tells
+            # the person how to revoke it on claude.ai as well. Runs as the leader, never as root.
+            a = self._agent(s)
+            origin = self.headers.get("Origin") or ""
+            if a is None or not s["confirmed"] or origin != f"https://{self.headers.get('Host', '')}":
+                return self._send(403, b"refused")
+            if engine(a) == "codex":
+                run_as(a, [CODEX, "logout"], timeout=60)
+                run_as(a, ["/bin/sh", "-c", "rm -f \"$HERMES_HOME/auth.json\""], timeout=20)
+                _handed_over.pop(a["slug"], None)
+            else:
+                run_as(a, [CLAUDE, "auth", "logout"], timeout=60)
+            _claude_seen.pop(a["slug"], None)
+            log(f"{a['slug']}: AI sign-in disconnected by the person")
+            return self._json(200, {"disconnected": True, "service": service_name(a),
+                                    "revoke_note": ("Also remove the sign-in on claude.ai: Settings, Claude Code."
+                                                    if engine(a) != "codex" else "")})
         if path == "/_eca/sign-out":
             a = self._agent(s)
             with _lock:
