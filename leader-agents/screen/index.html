@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>ECA Agent</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <div class="app" id="app">
+    <header class="topbar">
+      <button class="icon-btn drawer-toggle" id="drawer-toggle" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open conversations">
+        <span aria-hidden="true">&#9776;</span>
+      </button>
+      <a class="brand" href="#/">ECA Agent</a>
+      <p class="conn-status" id="conn-status" role="status" aria-live="polite"></p>
+      <div class="account">
+        <button class="account-btn" id="account-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
+          <span class="avatar" id="account-initial" aria-hidden="true"></span>
+          <span class="visually-hidden">Account</span>
+        </button>
+        <div class="menu account-menu" id="account-menu" role="menu" hidden>
+          <div class="account-head">
+            <p class="account-name" id="account-name"></p>
+            <p class="account-claude" id="account-claude"></p>
+          </div>
+          <a role="menuitem" class="menu-item" href="/_eca/connect">Reconnect Claude</a>
+          <a role="menuitem" class="menu-item" href="https://www.ecastockreport.com/portal/me">Back to portal</a>
+          <button role="menuitem" class="menu-item" type="button" id="sign-out">Sign out</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar" aria-label="Conversations">
+        <div class="sidebar-top">
+          <a class="btn btn-primary new-chat" href="#/" id="new-chat">New conversation</a>
+          <nav class="views-nav" aria-label="Sections">
+            <a href="#/" data-nav="home">Chats</a>
+            <a href="#/files" data-nav="files">Files</a>
+            <a href="#/scheduled" data-nav="scheduled">Scheduled</a>
+          </nav>
+          <label class="visually-hidden" for="session-search">Search conversations</label>
+          <input class="input search" id="session-search" type="search" placeholder="Search conversations" autocomplete="off">
+        </div>
+        <div class="session-list" id="session-list" aria-live="polite" aria-busy="true"></div>
+      </aside>
+      <div class="backdrop" id="backdrop" hidden></div>
+
+      <main class="main" id="main" tabindex="-1">
+        <!-- Home -->
+        <section class="view view-home" id="view-home" aria-labelledby="greeting" hidden>
+          <div class="home-inner">
+            <h1 class="greeting" id="greeting">Hello</h1>
+            <p class="home-sub">What would you like to know today?</p>
+            <ul class="starters" id="starters" aria-label="Suggestions"></ul>
+          </div>
+        </section>
+
+        <!-- Conversation -->
+        <section class="view view-chat" id="view-chat" aria-label="Conversation" hidden>
+          <h1 class="chat-title" id="chat-title"></h1>
+          <div class="transcript" id="transcript" role="log" aria-live="polite" aria-relevant="additions text"></div>
+          <p class="activity" id="activity" aria-live="polite"></p>
+        </section>
+
+        <!-- Composer (shared by home and chat) -->
+        <form class="composer" id="composer" hidden>
+          <div class="attach-list" id="attach-list"></div>
+          <label class="visually-hidden" for="prompt">Message</label>
+          <textarea class="prompt" id="prompt" rows="1" placeholder="Ask about your clubs, reports or pay" autocomplete="off"></textarea>
+          <div class="composer-bar">
+            <div class="composer-left">
+              <label class="icon-btn attach-btn" title="Attach a file">
+                <input type="file" id="attach-input" multiple class="visually-hidden">
+                <span aria-hidden="true">+</span><span class="visually-hidden">Attach a file</span>
+              </label>
+              <label class="visually-hidden" for="effort">Effort</label>
+              <select class="select" id="effort"></select>
+              <label class="visually-hidden" for="model">Model</label>
+              <select class="select" id="model" hidden></select>
+            </div>
+            <div class="composer-right">
+              <button class="btn btn-stop" id="stop-btn" type="button" hidden>Stop</button>
+              <button class="btn btn-primary" id="send-btn" type="submit">Send</button>
+            </div>
+          </div>
+          <p class="composer-hint">Enter to send, Shift and Enter for a new line.</p>
+        </form>
+
+        <!-- Files -->
+        <section class="view view-files" id="view-files" aria-labelledby="files-title" hidden>
+          <div class="view-head">
+            <h1 id="files-title">Files</h1>
+            <label class="btn">
+              <input type="file" id="file-upload" multiple class="visually-hidden">Upload
+            </label>
+          </div>
+          <nav class="crumbs" id="crumbs" aria-label="Folder"></nav>
+          <p class="view-status" id="files-status" role="status" aria-live="polite"></p>
+          <ul class="file-list" id="file-list"></ul>
+        </section>
+
+        <!-- Scheduled -->
+        <section class="view view-scheduled" id="view-scheduled" aria-labelledby="sched-title" hidden>
+          <div class="view-head"><h1 id="sched-title">Scheduled</h1></div>
+          <p class="view-status" id="jobs-status" role="status" aria-live="polite"></p>
+          <ul class="job-list" id="job-list"></ul>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

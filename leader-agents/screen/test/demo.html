@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ECA Agent (offline demo)</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<script type="module">
+// Offline demo: loads the real index.html body and app.js against a fake gateway.
+// Serve the screen folder over http (python3 -m http.server) and open /test/demo.html.
+// Try: a starter card; a message containing "report" (approval card); "pay" (auth error);
+// "which" (clarify card); "drop" (socket disconnect + reconnect mid answer).
+const html = await (await fetch('../index.html')).text();
+const doc = new DOMParser().parseFromString(html, 'text/html');
+document.body.innerHTML = doc.body.innerHTML; // our own static markup, not model text
+
+sessionStorage.setItem('hermes.webapp.session.v1:' + JSON.stringify([location.origin, '']), 'D'.repeat(43));
+const now = Date.now() / 1000;
+const sessions = [
+  { id: 's-a', title: 'Everett sales this week', preview: 'How is Everett doing', last_active: now - 600 },
+  { id: 's-b', title: null, preview: 'What does my pay look like', last_active: now - 86400 * 2 },
+];
+const transcripts = {
+  's-a': [
+    { id: 1, role: 'user', content: 'How is Everett doing this week?' },
+    { id: 2, role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'eca_club_dashboard', arguments: '{"club_number":"06902"}' } }] },
+    { id: 3, role: 'tool', tool_call_id: 'c1', content: '{"nb_promo": 18250, "new_eft": 1490}' },
+    { id: 4, role: 'assistant', content: 'Everett is **ahead of goal**:\n\n| Metric | MTD | Goal |\n|---|--:|--:|\n| NB/Promo | $18,250 | $16,000 |\n| New EFT | $1,490 | $1,400 |\n\nSee [the dashboard](https://example.com).' },
+  ],
+  's-b': [{ id: 1, role: 'user', content: 'What does my pay look like?' }],
+};
+let jobs = [
+  { id: 'j1', name: 'Monday club summary', schedule: { kind: 'cron', expr: '0 7 * * 1' }, enabled: true, next_run_at: now + 86400 * 3 },
+  { id: 'j2', name: 'Daily sales brief', schedule: { kind: 'cron', expr: '0 6 * * *' }, enabled: false },
+];
+const files = { '/home/leader': [
+  { name: '.hermes', path: '/home/leader/.hermes', is_directory: true },
+  { name: 'reports', path: '/home/leader/reports', is_directory: true },
+  { name: 'q3-summary.pdf', path: '/home/leader/q3-summary.pdf', is_directory: false, size: 182044, mtime: now - 3600 },
+], '/home/leader/reports': [
+  { name: 'everett-oct.xlsx', path: '/home/leader/reports/everett-oct.xlsx', is_directory: false, size: 22011, mtime: now - 7200 },
+] };
+
+const json = (b, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
+window.fetch = async (url, opts = {}) => {
+  const u = new URL(url, location.origin); const m = opts.method || 'GET'; const p = u.pathname;
+  await new Promise((r) => setTimeout(r, 120));
+  if (p === '/_eca/whoami') return json({ name: 'Dana Whitfield', claude_signed_in: true });
+  if (p === '/api/webapp/socket-ticket') return json({ ticket: 'tk' + Math.random().toString(16).slice(2), ttl_seconds: 30 });
+  if (p === '/api/sessions') return json({ sessions, total: sessions.length });
+  const mm = p.match(/^\/api\/sessions\/([^/]+)\/messages$/); if (mm) return json({ session_id: mm[1], messages: transcripts[mm[1]] || [] });
+  if (/mutation-snapshot$/.test(p)) return json({ exists: true, runtime_revision: 1, runtime_generation: 0 });
+  const pm = p.match(/^\/api\/sessions\/([^/]+)$/);
+  if (pm && m === 'PATCH') { const b = JSON.parse(opts.body); const s = sessions.find((x) => x.id === pm[1]); if (b.title) s.title = b.title; if (b.archived) sessions.splice(sessions.indexOf(s), 1); return json({ ok: true }); }
+  if (p === '/api/cron/jobs') return json(jobs);
+  const jm = p.match(/^\/api\/cron\/jobs\/([^/]+)(?:\/(pause|resume))?$/);
+  if (jm) { const j = jobs.find((x) => x.id === jm[1]); if (jm[2]) j.enabled = jm[2] === 'resume'; else if (m === 'DELETE') jobs = jobs.filter((x) => x !== j); return json(m === 'DELETE' ? { ok: true } : j); }
+  if (p === '/api/files') { const path = u.searchParams.get('path') || '/home/leader'; return json({ path, parent: null, entries: files[path] || [] }); }
+  if (p === '/api/files/upload-stream') { const f = opts.body.get('file'); files['/home/leader'].push({ name: f.name, path: '/home/leader/' + f.name, size: f.size, mtime: Date.now() / 1000 }); return json({ ok: true }); }
+  if (p === '/api/fs/download') return new Response(new Blob(['demo file']));
+  if (p === '/api/model/options') return json({ model: 'claude-sonnet-4-5', provider: 'anthropic', providers: [{ slug: 'anthropic', authenticated: true, models: ['claude-sonnet-4-5', 'claude-opus-4-1', 'claude-haiku-4-5'] }] });
+  return json({ detail: 'Not found' }, 404);
+};
+
+class FakeWS {
+  constructor() { this.readyState = 1; FakeWS.current = this; this.seq = 0; setTimeout(() => this.ev(null, 'gateway.ready', { session_authority: true, heartbeat: true, replay_epoch: 'E' }), 200); }
+  push(o) { if (this.readyState === 1) this.onmessage?.({ data: JSON.stringify(o) }); }
+  ev(sid, type, payload, extra = {}) { this.push({ jsonrpc: '2.0', method: 'event', params: { type, session_id: sid, payload, seq: sid ? ++FakeWS.seq : undefined, replay_epoch: 'E', execution_generation: 1, ...extra } }); }
+  close() { this.readyState = 3; }
+  send(raw) {
+    const msg = JSON.parse(raw); const reply = (result) => setTimeout(() => this.push({ jsonrpc: '2.0', id: msg.id, result }), 60);
+    const p = msg.params || {};
+    switch (msg.method) {
+      case 'session.create': { const id = 's-' + Date.now().toString(36); sessions.unshift({ id, title: null, preview: '', last_active: Date.now() / 1000 }); transcripts[id] = []; return reply({ session_id: id, running: false, revision: 1, execution_generation: 0, replay_epoch: 'E', last_sequence: FakeWS.seq, prompts: [], info: {} }); }
+      case 'session.resume': return reply({ session_id: p.session_id, running: false, revision: 1, execution_generation: 1, replay_epoch: 'E', last_sequence: FakeWS.seq, prompts: [], info: {} });
+      case 'session.events.since': return reply({ events: [], snapshot_required: false, replay_epoch: 'E' });
+      case 'prompt.submit': reply({ admission_id: 'a1', status: 'queued' }); return this.script(p.session_id, p.text);
+      case 'approval.respond': reply({ status: 'resolved', prompt_id: p.prompt_id }); this.ev(p.session_id, 'approval.settled', { prompt_id: p.prompt_id }); return this.answer(p.session_id, p.choice === 'deny' ? 'Okay, I did not save it.' : 'Saved **everett-report.pdf** to your files.');
+      case 'clarify.respond': reply({ status: 'resolved' }); return this.answer(p.session_id, `Got it: **${p.answer || 'no preference'}**. Here are the numbers.`);
+      case 'prompt.cancel': case 'session.interrupt': reply({}); clearInterval(this.timer); return this.ev(p.session_id, 'message.complete', { status: 'interrupted', outcome: 'cancelled', text: '' });
+      default: return reply({});
+    }
+  }
+  stream(sid, text, done) {
+    const words = text.match(/\S+\s*/g); let off = 0; let k = 0;
+    this.timer = setInterval(() => {
+      if (k >= words.length) { clearInterval(this.timer); return done && done(); }
+      const w = words[k++]; this.ev(sid, 'message.delta', { text: w, turn_id: 'T' + sid + FakeWS.turn, segment: 0, offset: off }); off += w.length;
+    }, 40);
+  }
+  answer(sid, text) { FakeWS.turn = (FakeWS.turn || 0) + 1; this.stream(sid, text, () => this.ev(sid, 'message.complete', { status: 'complete', outcome: 'completed', text: '' })); }
+  script(sid, text) {
+    const t = text.toLowerCase(); FakeWS.turn = (FakeWS.turn || 0) + 1;
+    this.ev(sid, 'session.info', { running: true, execution_generation: 1, revision: 2 });
+    if (t.includes('pay')) return setTimeout(() => this.ev(sid, 'message.complete', { status: 'error', text: 'auth failed', error_surface: { layer: 'auth', code: 'auth', retryable: false, auth_kind: 'oauth' } }), 600);
+    this.ev(sid, 'tool.start', { tool_id: 'x1', name: 'eca_club_dashboard', context: 'club 06902', args: { club_number: '06902', path: '/home/leader/.hermes/cache/x.json' } });
+    setTimeout(() => {
+      this.ev(sid, 'tool.complete', { tool_id: 'x1', name: 'eca_club_dashboard', is_error: false, result: '{"nb_promo":18250}', duration_s: 0.8 });
+      if (t.includes('report')) return this.ev(sid, 'approval.request', { kind: 'approval', prompt_id: 'pp' + Date.now(), execution_generation: 1, command: 'save /home/leader/everett-report.pdf', description: 'Save a report to your files', choices: ['once', 'deny', 'session', 'always'] });
+      if (t.includes('which')) return this.ev(sid, 'clarify.request', { kind: 'clarify', prompt_id: 'cq' + Date.now(), execution_generation: 1, question: 'Which club?', choices: ['Everett', 'Wallingford', 'Columbia', 'Ballinger'], multi_select: false });
+      this.stream(sid, 'Month to date, **Everett** is ahead:\n\n- NB/Promo: $18,250 (114% of goal)\n- New EFT: $1,490\n- Front end PT: $6,120\n\nWallingford and Columbia are close behind. <b>raw html stays text</b>', () => {
+        if (t.includes('drop')) { this.readyState = 3; this.onclose?.({ code: 1006 }); return; }
+        this.ev(sid, 'message.complete', { status: 'complete', outcome: 'completed', text: '' });
+        this.ev(sid, 'session.title', { session_id: sid, title: 'Club numbers check' });
+      });
+    }, 900);
+  }
+}
+FakeWS.seq = 0;
+window.WebSocket = FakeWS;
+await import('../app.js');
+</script>
+</body>
+</html>

@@ -42,6 +42,16 @@ http {
 
     location = /enter            { proxy_pass http://eca_supervisor; }
     location /_eca/static/       { alias /opt/eca/skin/; add_header Cache-Control "no-cache"; }
+    # ECA's own agent screen (trial, alongside the engine's). Static files only; all data
+    # it shows comes through the signed-in person's own workspace below.
+    location = /ui { return 302 /ui/; }
+    location /ui/test/ { return 404; }
+    location /ui/ {
+      alias /opt/eca/screen/;
+      add_header Cache-Control "no-cache";
+      add_header Content-Security-Policy "default-src 'self'; connect-src 'self' wss://$host; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+      add_header X-Content-Type-Options nosniff;
+    }
     location /_eca/vendor/       { alias /opt/eca-vendor/; add_header Cache-Control "public, max-age=86400"; }
     location /_eca/ {
       proxy_pass http://eca_supervisor;
