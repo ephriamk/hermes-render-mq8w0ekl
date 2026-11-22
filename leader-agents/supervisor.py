@@ -1137,6 +1137,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, {"state": state, "detail": rt.get("notice") or rt.get("detail", ""),
                                     "epoch": rt.get("epoch", 0),
                                     "claude": claude_signed_in(a) if state == "ready" else None})
+        if path == "/_eca/connections":
+            if not s["confirmed"]:
+                return self._send(302, headers={"Location": "/_eca/start"})
+            svc = service_name(a)
+            on = claude_signed_in(a)
+            portal = html.escape(f"{PORTAL_URL}/portal/agent")
+            ai = (f"<p><b>{svc}</b> (your AI plan): <span class=who>connected</span>. "
+                  "Remove it any time with Disconnect AI in the top bar.</p>" if on else
+                  f"<p><b>{svc}</b> (your AI plan): not connected.</p>"
+                  "<a class=btn href=/_eca/connect>Connect it</a>")
+            return self._page(200,
+                "<h1>Connections</h1>"
+                "<p>What your agent can reach. Each one is yours alone and can be removed at any time.</p>"
+                + ai +
+                "<p><b>ECA data</b> (dashboards, Stats, schedule, classes, sales, members, pay): "
+                "<span class=who>connected</span>. It shows only what your portal shows you.</p>"
+                "<p><b>Google Workspace</b> (Gmail read and drafts, Calendar, Drive): connect or remove it "
+                "on the portal's My agent page. Your agent drafts email; it never sends.</p>"
+                f'<a class=btn href="{portal}" rel="noreferrer">Manage Google in the portal</a>'
+                "<p><small>More connections are added by ECA after a security check, so nothing you "
+                "connect can leak club or member data.</small></p>"
+                '<p><a href="/_eca/open">Back to my agent</a></p>')
         if path == "/_eca/whoami":
             if not s["confirmed"]:
                 return self._send(401)

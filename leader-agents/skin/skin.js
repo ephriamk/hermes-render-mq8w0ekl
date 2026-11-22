@@ -204,6 +204,9 @@
       var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect " + service);
       re.addEventListener("click", function () { location.assign("/_eca/connect"); });
       c.appendChild(re);
+      var con = el("button", { type: "button", "class": "eca-connections", title: "What your agent is connected to" }, "Connections");
+      con.addEventListener("click", function () { location.assign("/_eca/connections"); });
+      c.appendChild(con);
       var dis = el("button", { type: "button", "class": "eca-disconnect", title: "Remove your AI sign-in from this workspace" }, "Disconnect AI");
       dis.addEventListener("click", function () {
         if (!confirm("Disconnect your " + service + " sign-in from your ECA agent? Your chats and files stay. You can connect again any time.")) return;
