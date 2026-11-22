@@ -111,6 +111,7 @@
     var gem = window.ECAEmerald; if (!gem) return;
     var open = !!document.querySelector('[data-slot="aui_thread-content"]') && !document.querySelector("p.wordmark") &&
                !document.getElementById("eca-intro") && window.innerWidth >= 900;
+    document.documentElement.classList.toggle("eca-pal-on", open);
     if (!open) { if (pal) pal.style.display = "none"; if (palState !== "idle") { palState = "idle"; clearTimeout(palTimer); gem.mood("idle"); } return; }
     if (!pal) {
       pal = el("div", { id: "eca-pal", "aria-hidden": "true" });
@@ -134,12 +135,15 @@
       palLen = n;
     } else if (palState === "thinking" || palState === "speaking") {
       // The answer is in. Read its cards: more red than green is concern, any green is pleased.
-      var bad = lastMsg ? lastMsg.querySelectorAll(".eca-w .t-bad").length : 0;
-      var good = lastMsg ? lastMsg.querySelectorAll(".eca-w .t-good").length : 0;
-      var after = bad > good ? "worried" : good > 0 ? "happy" : "idle";
-      palState = "after"; gem.mood(after);
+      palState = "after"; gem.mood("idle");
       clearTimeout(palTimer);
-      palTimer = setTimeout(function () { if (palState === "after") { palState = "idle"; gem.mood("idle"); } }, 6500);
+      palTimer = setTimeout(function () {                      // the cards are drawn a moment after the text completes
+        if (palState !== "after") return;
+        var all = document.querySelectorAll('[data-slot="aui_assistant-message-content"]'), m = all.length ? all[all.length - 1] : null;
+        var bad = m ? m.querySelectorAll(".eca-w .t-bad").length : 0, good = m ? m.querySelectorAll(".eca-w .t-good").length : 0;
+        gem.mood(bad > good ? "worried" : good > 0 ? "happy" : "idle");
+        palTimer = setTimeout(function () { if (palState === "after") { palState = "idle"; gem.mood("idle"); } }, 7000);
+      }, 500);
     }
   }
   function strip() {
