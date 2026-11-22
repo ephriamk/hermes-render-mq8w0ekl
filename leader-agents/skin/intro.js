@@ -86,13 +86,13 @@ void main(){
   for(int i=0;i<4;i++){
     vec2 c=vec2((i==0||i==2)?-1.:1.,(i<2)?1.:-1.)*vec2(asp*.5-.09,.41);
     float g=0.;
-    for(int j=0;j<36;j++){
-      float tt=clamp(ct-float(j)*.0085,0.,1.);
+    for(int j=0;j<72;j++){
+      float tt=clamp(ct-float(j)*.0042,0.,1.);
       float e=tt*tt*(3.-2.*tt);e=e*e*(3.-2.*e);
-      float a=(1.-e)*1.9*((i==0||i==3)?1.:-1.);
+      float a=(1.-e)*1.15*((i==0||i==3)?1.:-1.);
       vec2 q=c*(1.-e);q=mat2(cos(a),-sin(a),sin(a),cos(a))*q;
       float dd=dot(uv-q,uv-q);
-      g+=(.00016/(dd+.00006))*exp(-dd*55.)*pow(1.-float(j)/36.,1.6)*(j==0?3.:1.);}
+      g+=(.00008/(dd+.00006))*exp(-dd*55.)*pow(1.-float(j)/72.,1.6)*(j==0?6.:1.);}
     col+=vec3(.35,1.,.68)*g*smoothstep(0.,.12,t)*(1.-smoothstep(1.28,1.5,t));}
   // impact: a ring of light leaves the centre
   float it=t-1.3;
