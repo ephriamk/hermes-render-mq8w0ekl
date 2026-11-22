@@ -87,7 +87,24 @@
       });
     }
   }
+  // Tool labels inside an answer ("Mcp.hermes-tools.skill View") are the screen's own wording, not
+  // the person's or the agent's text, so the engine's name is taken out of them too. Only text
+  // inside the small tool buttons is touched; the conversation itself is left exactly as written.
+  function toolLabels() {
+    var btns = document.querySelectorAll('[data-slot="aui_thread-content"] button');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      if (b.closest(".eca-w-host") || !/hermes/i.test(b.textContent || "")) continue;
+      var tw = document.createTreeWalker(b, NodeFilter.SHOW_TEXT), tn;
+      while ((tn = tw.nextNode())) {
+        var v = tn.nodeValue, w = v.replace(/\bMcp\.hermes-tools\./gi, "").replace(/\bhermes[-_ ]tools\b/gi, "tools");
+        w = swap(w);
+        if (w !== v) tn.nodeValue = w.charAt(0).toUpperCase() + w.slice(1);
+      }
+    }
+  }
   function strip() {
+    toolLabels();
     if (document.title !== TITLE) document.title = TITLE;
     if (BLOCKED_ROUTES.test(location.hash)) { location.hash = "#/"; }
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');
