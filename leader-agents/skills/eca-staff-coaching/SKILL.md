@@ -1,7 +1,7 @@
 ---
 name: eca-staff-coaching
 description: "Coaching prep for one salesperson or trainer: their production against quota, the specific sales and records behind it, and talking points for the one-on-one. Use for 'how is <name> doing', 'prep me for my one-on-one with <name>', 'coach <name>'."
-version: 1.0.0
+version: 1.1.0
 author: Emerald City Athletics
 metadata:
   hermes:
@@ -35,7 +35,13 @@ someone is behind or ahead.
    a trainer behind on PT, coaches_pt and first_workouts.
 4. Put them in context: the same lines for the club's other staff from step 2 (rank, not a ranking
    table of names unless asked).
-5. If a term could be read two ways, check `eca_knowledge` first (closing %, average EFT, 5-star %
+5. When asked to rank or pick people ("who is furthest behind", "bottom two"): a row with a quota
+   but no tours, no deals and no sales for the whole period is almost always someone who is not
+   working sales this month (new, on leave, moved role), not someone to coach. Do not rank them.
+   Name them once in a separate line ("No activity this month: <name>. Worth confirming their
+   status.") and pick from the people who have activity. The same goes for a trainer with a quota
+   and no sessions or sales.
+6. If a term could be read two ways, check `eca_knowledge` first (closing %, average EFT, 5-star %
    and "quota %" each have more than one definition).
 
 ## What to send
