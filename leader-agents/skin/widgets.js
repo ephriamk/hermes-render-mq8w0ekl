@@ -195,11 +195,26 @@
     try { var d = JSON.parse(s); return d && KINDS[d.eca] ? d : null; } catch (e) { return "partial"; }
   }
 
-  function upgrade(code) {
+  // A long block is not drawn as code at all: the engine folds it into a small "json · Code" chip
+  // (data-slot="aui_artifact-card") and keeps the text only in the component's own props. Without
+  // this, any card over ~3 KB (a 40-row call list) showed as that chip (found 11-22).
+  function chipText(card) {
+    try {
+      var key = Object.keys(card).filter(function (k) { return k.indexOf("__reactFiber") === 0; })[0];
+      var f = key ? card[key] : null;
+      for (var i = 0; i < 8 && f; i++, f = f.return) {
+        var p = f.memoizedProps;
+        if (p && typeof p.code === "string") return p.code;
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  function upgrade(code, chip) {
     // The engine wraps fenced code in its own "code card" (data-slot="code-card"); the widget goes
     // beside that card, never inside it, so the card's code font and height limit do not apply.
-    var pre = code.closest('[data-slot="code-card"]') || code.closest("pre") || code;
-    var text = code.textContent;
+    var pre = chip ? code : (code.closest('[data-slot="code-card"]') || code.closest("pre") || code);
+    var text = chip ? chipText(code) : code.textContent;
     if (pre.dataset.ecaSeen === text) return;
     pre.dataset.ecaSeen = text;
     var d = parse(text);
@@ -236,6 +251,10 @@
         continue;
       }
       upgrade(c);
+    }
+    var chips = document.querySelectorAll('[data-slot="aui_artifact-card"]');
+    for (var j = 0; j < chips.length; j++) {
+      if (chips[j].dataset.ecaSeen || chipText(chips[j]).indexOf('"eca"') >= 0) upgrade(chips[j], true);
     }
   }
   var queued = false;
