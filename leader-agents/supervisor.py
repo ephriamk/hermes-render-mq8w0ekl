@@ -1356,6 +1356,35 @@ def memory_mb(uid: int) -> float:
     return total_kb / 1024
 
 
+def memory_breakdown(uid: int) -> str:
+    """Which programs of one account hold the memory: program name, how many, summed resident
+    and proportional (shared pages counted once) MB. Names and sizes only, never arguments."""
+    by = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/status") as f:
+                text = f.read()
+            m_uid = re.search(r"^Uid:\s+(\d+)", text, re.M)
+            if not m_uid or int(m_uid.group(1)) != uid:
+                continue
+            name = (re.search(r"^Name:\s+(\S+)", text, re.M) or [None, "?"])[1]
+            rss = int((re.search(r"^VmRSS:\s+(\d+)", text, re.M) or [0, 0])[1])
+            pss = 0
+            try:
+                with open(f"/proc/{d}/smaps_rollup") as f:
+                    pss = int((re.search(r"^Pss:\s+(\d+)", f.read(), re.M) or [0, 0])[1])
+            except OSError:
+                pass
+            e = by.setdefault(name, [0, 0, 0])
+            e[0] += 1; e[1] += rss; e[2] += pss
+        except Exception:
+            continue
+    top = sorted(by.items(), key=lambda kv: -kv[1][1])[:7]
+    return ", ".join(f"{n} x{c} {r // 1024}/{q // 1024} MB" for n, (c, r, q) in top)
+
+
 def disk_mb(a: dict):
     """Size of a leader's home, measured AS the leader (root never walks their files)."""
     try:
@@ -1391,6 +1420,9 @@ def limits() -> None:
                 mb = memory_mb(a["uid"])
                 if check_disk:
                     log(f"{a['slug']}: using {mb:.0f} MB of memory")
+                if mb > MEMORY_LIMIT_MB * 0.5 and time.time() - rt.get("mem_detail_at", 0) > 60:
+                    rt["mem_detail_at"] = time.time()
+                    log(f"{a['slug']}: memory by program (count resident/proportional): {memory_breakdown(a['uid'])}")
                 if mb > MEMORY_LIMIT_MB:
                     reason = f"used {mb:.0f} MB of memory (limit {MEMORY_LIMIT_MB} MB)"
             if reason is None and check_disk and DISK_LIMIT_MB:
