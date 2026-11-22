@@ -1,10 +1,18 @@
 # ECA leader agents: one Hermes workspace per leader, each under its own Linux
 # account, behind one front gate. Separate from the payroll worker image at the
 # repo root. Plan: ECAMain/portal/eca-intelligence-layer-hermes-plan.md
-ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.23.2@sha256:d6746a084e9341baada483e3d6210444d3c1aeb7c130f0915150065fb2851459
+# Upgrade routine: ECAMain/portal/hermes-agent-deep-dive-2026-11-20.md section 4.3. Change only this
+# line; the supervisor backs up every leader's home and runs Hermes' own post-upgrade steps the first
+# time a home meets a new image (it reads the pin from /etc/eca/hermes-image, written below).
+# v0.23.3 (2026-11-21): fixes the Webapp going blank on Safari and iPhones. Digest checked against
+# Docker Hub (same as `stable`). Previous pin, for a rollback:
+#   v0.23.2@sha256:d6746a084e9341baada483e3d6210444d3c1aeb7c130f0915150065fb2851459
+ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.23.3@sha256:3e9fe4c6ef36490f43aa0d0d80f9df64e9c92a576eee3042f1a97c8813c05355
 FROM ${HERMES_IMAGE}
 
 USER root
+ARG HERMES_IMAGE
+RUN mkdir -p /etc/eca && printf '%s\n' "${HERMES_IMAGE}" > /etc/eca/hermes-image && chmod 0644 /etc/eca/hermes-image
 ENV TZ=America/Los_Angeles
 RUN apt-get update \
  && apt-get install -y --no-install-recommends nginx-light socat dumb-init tzdata openssl procps iproute2 curl ca-certificates util-linux \
@@ -50,8 +58,10 @@ RUN npm install -g --allow-scripts=@openai/codex "@openai/codex@${CODEX_VERSION}
 
 COPY --chown=root:root . /opt/eca/
 RUN chmod 0755 /opt/eca/*.sh /opt/eca/supervisor.py \
- && chmod -R a+rX /opt/eca/skin \
+ && chmod -R a+rX /opt/eca/skin /opt/eca/skills \
  && /opt/hermes/.venv/bin/python -m py_compile /opt/eca/supervisor.py /opt/eca/selftest.py \
+ && test -f /opt/hermes/scripts/docker_config_migrate.py && test -f /opt/hermes/tools/skills_sync.py \
+ && for d in /opt/eca/skills/eca-*/; do test -f "$d/SKILL.md" || exit 1; done \
  && sed 's/__PORT__/10000/' /opt/eca/nginx.conf.template > /tmp/nginx-check.conf \
  && nginx -t -c /tmp/nginx-check.conf \
  && rm -f /tmp/nginx-check.conf

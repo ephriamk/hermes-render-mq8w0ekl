@@ -330,6 +330,42 @@ them for prose. JSON must be valid; strings only, no HTML. Tones: good, bad, war
 - A day's schedule: {{"eca":"timeline","title":"...","items":[{{"time":"6:00 PM","title":"Champions Training","who":"Coach","detail":"8 booked","badge":"Needs a coach","tone":"warn"}}]}}
 - An email you drafted with eca_gmail_draft: {{"eca":"draft","to":"...","subject":"...","body":"..."}}
 
+## ECA playbooks (skills)
+
+ECA installs step-by-step playbooks as skills (category `eca`). When a request matches one, load it
+with `skill_view` (name below) before you answer and follow it: it names the tools, the order and
+the shape of the answer. `skills_list` shows what is installed.
+
+- `eca-morning-brief`: yesterday against quota, today's schedule, classes needing a coach, who to call.
+- `eca-call-list`: outreach lists (no 1st workout, PT buyers with nothing booked, guests who did not join).
+- `eca-tomorrow`: tomorrow's schedule, open PT slots, bonus workouts with recent PT buyers, coach gaps.
+- `eca-weekly-club-report`: one-page weekly report saved as a file, plus a summary card.
+- `eca-staff-coaching`: one salesperson's or trainer's production against quota, the records behind it.
+- `eca-numbers-explained`: how to explain any ECA number (knowledge base first, name the definition).
+- `eca-pay-questions`: own pay and team pay, with the confidentiality rules.
+
+## Scheduled work
+
+This workspace can run a prompt on a schedule (a "scheduled job"), for example the morning brief at
+7:00 AM on weekdays. Be exact about what is and is not set up:
+
+- {name} can create, pause and delete jobs on the scheduled jobs page in the sidebar. You can create
+  one with the scheduling tool (`cronjob_manage`) when you have it. If you do not have that tool (the
+  ChatGPT engine does not expose it), use the terminal in this workspace instead, for example:
+  `hermes cron create "0 7 * * 1-5" "Run the eca-morning-brief playbook for Everett (06902)" --skill eca-morning-brief --name "Morning brief" --timezone America/Los_Angeles`
+  then `hermes cron list` to confirm it is there. Always pass the Pacific time zone.
+- Only say a job is scheduled after you have seen it in the list. Never promise a recurring report
+  you did not create and confirm.
+- Jobs run only while this workspace is running. It stops after it has been idle for a while and
+  starts again when {name} opens it from the portal, so a job due while it was stopped runs late or
+  is skipped. Say this when you set one up.
+- A scheduled run has nobody to click "allow": anything that needs approval is refused. ECA lookups
+  are pre-approved; keep scheduled prompts to reading ECA data and writing the result.
+- Scheduled runs on the ChatGPT engine are not yet proven here. After creating one, offer to run it
+  once (`hermes cron run <name>`) and check the result together before relying on it.
+- Results stay in this workspace (the job's run history, or a file you name in the prompt). The same
+  rules apply as in a chat: club and dates on every number, no member names or pay in saved files.
+
 ## Your notes (memory)
 
 - Keep a private notes file at `~/ECA-notes.md` in this workspace. Read it at the start of every new
@@ -375,9 +411,371 @@ def _config_text(a: dict, bare: bool) -> str:
             "    timeout: 120\n")
 
 
+# ───────────────────────────── image upgrades ─────────────────────────────
+# The first time a leader's home meets a new Hermes image, before any Hermes program of that image
+# touches it: (1) back the home up, (2) run the steps Hermes' own container start-up runs after an
+# upgrade (docker/stage2-hook.sh), which our entrypoint replaces: config-schema migration,
+# dependency refresh for plugins, bundled-skills sync. Both run as the leader, once per image.
+# Runbook: ECAMain/portal/hermes-agent-deep-dive-2026-11-20.md section 4.3.
+
+def _image_id() -> str:
+    forced = os.environ.get("ECA_IMAGE_ID")
+    if forced is not None:
+        return forced.strip()
+    try:
+        return Path("/etc/eca/hermes-image").read_text().strip()
+    except OSError:
+        return ""
+
+
+IMAGE_ID = _image_id()          # e.g. docker.io/nousresearch/hermes-agent:v0.23.3@sha256:3e9f...
+BACKUPS = DATA / "backups"
+BACKUP_KEEP = 5
+BACKUP_MAX_MB = 2048
+HERMES_ROOT = "/opt/hermes"
+SKILLS_SRC = Path(os.environ.get("ECA_SKILLS_DIR", "/opt/eca/skills"))
+_prep_locks: dict = {}          # slug -> lock: one image step at a time per home
+
+
+def _prep_lock(a: dict) -> threading.RLock:
+    with _lock:
+        return _prep_locks.setdefault(a["slug"], threading.RLock())
+
+
+def _image_label(image: str) -> str:
+    m = re.search(r":([A-Za-z0-9._-]+)(?:@sha256:([0-9a-f]{12}))?", image.rsplit("/", 1)[-1])
+    if not m:
+        return "unknown"
+    return m.group(1) + (f"-{m.group(2)}" if m.group(2) else "")
+
+
+# Runs AS THE LEADER and writes one zip to its standard output, which root has pointed at a new file in
+# a root-only folder: root never opens anything in the home, and the leader's process can write only
+# that one file. Databases are copied with SQLite's own backup call (safe with a write-ahead log).
+# Sign-ins and tokens are left out on purpose (.env, auth.json, the ChatGPT and Claude folders): ECA
+# reissues the data token at the next portal sign-in and the AI sign-in belongs to the leader.
+BACKUP_HELPER = r'''
+import json, os, sqlite3, stat, sys, tempfile, time, zipfile
+from urllib.parse import quote
+hh = os.environ["HERMES_HOME"]; home = os.environ["HOME"]
+if os.path.islink(hh) or not os.path.isdir(hh):
+    sys.stderr.write(json.dumps({"status": "no-home"})); sys.exit(3)
+SECRET = (".env", "auth", "token", "credential", "secret", "cookie", ".pem", ".key")
+SIDE = ("-wal", "-shm", "-journal")
+files, failed, total = {}, [], 0
+def secretish(name):
+    n = name.lower()
+    return any(s in n for s in SECRET)
+def snap_db(src):
+    fd, tmp = tempfile.mkstemp(suffix=".db", dir=os.environ.get("TMPDIR") or None); os.close(fd)
+    try:
+        try:
+            s = sqlite3.connect("file:" + quote(src) + "?mode=ro", uri=True, timeout=30)
+            s.execute("select count(*) from sqlite_master").fetchone()
+        except sqlite3.Error:
+            s = sqlite3.connect(src, timeout=30)
+        d = sqlite3.connect(tmp)
+        with d:
+            s.backup(d)
+        d.close(); s.close()
+        return tmp
+    except Exception:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+def add(zf, path, arc):
+    global total
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if not stat.S_ISREG(st.st_mode) or secretish(os.path.basename(path)) or path.endswith(SIDE):
+        return
+    try:
+        if path.endswith(".db"):
+            tmp = snap_db(path)
+            try: zf.write(tmp, arc)
+            finally: os.unlink(tmp)
+        else:
+            zf.write(path, arc)
+        files[arc] = st.st_size; total += st.st_size
+    except Exception as e:
+        failed.append(arc + ": " + type(e).__name__)
+def add_tree(zf, root, arc):
+    if os.path.islink(root) or not os.path.isdir(root):
+        return
+    for base, dirs, names in os.walk(root, followlinks=False):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(base, d)) and not secretish(d)]
+        for n in sorted(names):
+            p = os.path.join(base, n)
+            add(zf, p, arc + "/" + os.path.relpath(p, root).replace(os.sep, "/"))
+out = os.fdopen(1, "wb")
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+    for n in sorted(os.listdir(hh)):
+        p = os.path.join(hh, n)
+        if n.endswith(".db") or n in ("config.yaml", "SOUL.md", ".eca-soul", "gateway_state.json",
+                                      "processes.json", "ui-preferences.json", "channel_directory.json"):
+            add(zf, p, "hermes/" + n)
+    for d in ("cron", "memories", "kanban/boards", "gateway"):
+        add_tree(zf, os.path.join(hh, d), "hermes/" + d)
+    add(zf, os.path.join(hh, "skills", ".eca_manifest.json"), "hermes/skills/.eca_manifest.json")
+    add(zf, os.path.join(home, "ECA-notes.md"), "home/ECA-notes.md")
+    zf.writestr("eca-backup.json", json.dumps({
+        "made": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "label": sys.argv[1] if len(sys.argv) > 1 else "",
+        "files": files, "failed": failed,
+        "left_out": "sign-ins and tokens (.env, auth.json, .codex, .claude), session media, caches, logs, skills",
+        "restore": "stop the workspace; as the leader, unzip hermes/* over ~/.hermes on the image named in the label"}, indent=1))
+out.flush()
+sys.stderr.write(json.dumps({"status": "ok" if not failed else "partial", "files": len(files), "bytes": total,
+                             "failed": failed[:10], "has_state_db": "hermes/state.db" in files}))
+sys.exit(0 if not failed else 1)
+'''
+
+
+def backup_home(a: dict, label: str) -> dict:
+    """One zip of the leader's Hermes state under /srv/eca/backups/<slug>/ (root-only). Raises if the
+    backup is not complete, so a home is never started on a new image without one."""
+    d = BACKUPS / a["slug"]
+    for p in (BACKUPS, d):
+        if p.is_symlink():
+            raise RuntimeError("backup folder is a link; refusing to use it")
+        p.mkdir(parents=True, exist_ok=True)
+        os.chown(p, 0, 0)
+        os.chmod(p, 0o700)
+    for stale in d.glob("*.part"):
+        stale.unlink()
+    name = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{label}.zip"
+    part = d / (name + ".part")
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        argv = [PY, "-I", "-c", BACKUP_HELPER, label]
+        if os.path.exists("/usr/bin/prlimit"):       # the leader's process cannot fill the disk
+            argv = ["/usr/bin/prlimit", f"--fsize={BACKUP_MAX_MB * 1024 * 1024}", "--"] + argv
+        r = subprocess.run(argv, stdout=fd, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=900, **_drop(a))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        info = json.loads((r.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-1])
+    except Exception:
+        info = {"status": "error"}
+    if r.returncode != 0 or info.get("status") != "ok":
+        part.unlink(missing_ok=True)
+        raise RuntimeError(f"the pre-upgrade backup did not complete ({info.get('status')}, exit {r.returncode}, "
+                           f"{'; '.join(info.get('failed') or [])[:120]})")
+    os.replace(part, d / name)
+    for old in sorted(d.glob("*.zip"))[:-BACKUP_KEEP]:
+        old.unlink()
+    return {"file": name, "at": int(time.time()), "files": info.get("files"), "bytes": (d / name).stat().st_size,
+            "has_state_db": bool(info.get("has_state_db"))}
+
+
+def image_backup(a: dict) -> None:
+    """Before the first Hermes command of a new image runs in an existing home."""
+    if not IMAGE_ID or IMAGE_ID in (a.get("image"), a.get("image_backup")):
+        return
+    if home_ops(a, [{"op": "exists", "path": ".hermes/config.yaml"}])[0].get("exists"):
+        label = f"pre-{_image_label(IMAGE_ID)}"
+        info = backup_home(a, label)
+        a["last_backup"] = {**info, "before_image": IMAGE_ID, "from_image": a.get("image") or "unrecorded"}
+        log(f"{a['slug']}: backed up before {_image_label(IMAGE_ID)}: {BACKUPS / a['slug'] / info['file']} "
+            f"({info['files']} files, {info['bytes'] // 1024} KB, state.db {'in' if info['has_state_db'] else 'NOT in'} it)")
+    a["image_backup"] = IMAGE_ID
+    with _lock:
+        save_state()
+
+
+_PRE = f"import sys, runpy; sys.path.insert(0, {HERMES_ROOT!r}); "
+POST_UPGRADE_STEPS = (
+    # (name, python source run as the leader, timeout). Mirrors docker/stage2-hook.sh at v0.23.3.
+    ("config migration", _PRE + (
+        "from pathlib import Path; import os; "
+        "from hermes_cli.env_loader import selected_config_backend_name; "
+        "b = selected_config_backend_name(Path(os.environ['HERMES_HOME'])); "
+        "print('config backend:', b); "
+        "sys.exit(0) if b != 'file' else None; "
+        f"runpy.run_path({HERMES_ROOT + '/scripts/docker_config_migrate.py'!r}, run_name='__main__')"), 300),
+    ("dependency refresh", _PRE + (
+        "from pathlib import Path; "
+        "from hermes_cli.runtime_state import collect_generations; "
+        "from pm.environments import install_state_dir; "
+        "from pm.recovery import refresh_dependencies; "
+        "from pm.runtime import collect_runtime_generations; "
+        f"root = Path({HERMES_ROOT!r}); "
+        "print('dependency environment:', refresh_dependencies(root)); "
+        "removed = collect_generations(root) + collect_runtime_generations(install_state_dir(root) / 'pm-runtime'); "
+        "print('collected', len(removed), 'unused dependency generations')"), 900),
+    ("bundled skills sync", _PRE + (
+        f"runpy.run_path({HERMES_ROOT + '/tools/skills_sync.py'!r}, run_name='__main__')"), 300),
+)
+
+
+def post_upgrade(a: dict) -> None:
+    """Hermes' own after-upgrade steps, as the leader, before a gateway of this image starts. A failed
+    step is logged and retried at the next two starts, then left (Hermes' start-up also only warns)."""
+    if not IMAGE_ID or a.get("image") == IMAGE_ID:
+        return
+    ok = True
+    for name, src, timeout in POST_UPGRADE_STEPS:
+        try:
+            r = run_as(a, [PY, "-I", "-c", src], timeout=timeout)
+            tail = " | ".join(ln.strip()[:160] for ln in ((r.stdout or "") + (r.stderr or "")).splitlines()
+                              if ln.strip())[-420:]
+            good = r.returncode == 0
+        except Exception as exc:
+            good, tail = False, type(exc).__name__
+        ok = ok and good
+        log(f"{a['slug']}: after-upgrade {name}: {'ok' if good else 'FAILED'}{' (' + tail + ')' if tail else ''}")
+    tries = int(a.get("image_tries") or 0) + 1
+    if ok or tries >= 3:
+        previous = a.get("image") or "unrecorded"
+        a.update(image=IMAGE_ID, image_from=previous, image_at=int(time.time()), image_steps_ok=ok)
+        a.pop("image_tries", None)
+        log(f"{a['slug']}: now on {_image_label(IMAGE_ID)} (was {_image_label(previous) if previous != 'unrecorded' else previous})"
+            f"{'' if ok else '; some after-upgrade steps failed, see above'}")
+    else:
+        a["image_tries"] = tries
+    with _lock:
+        save_state()
+
+
+# Runs AS THE LEADER. Installs ECA's skills (packaged playbooks, the official Hermes format) from the
+# image into ~/.hermes/skills/eca/. A manifest records what ECA installed, so only those are ever
+# replaced or removed: a skill the leader made is left alone, even one with the same folder name.
+# A leader's edit to an ECA skill is kept aside (eca-skills-replaced/) before ECA's version returns.
+SKILLS_HELPER = r'''
+import hashlib, json, os, shutil, stat, sys, time
+req = json.load(sys.stdin)
+src, hh = req["src"], req.get("hermes_home") or os.environ["HERMES_HOME"]
+root = os.path.join(hh, "skills"); cat = os.path.join(root, "eca"); mpath = os.path.join(root, ".eca_manifest.json")
+res = {"installed": [], "updated": [], "unchanged": [], "kept_own": [], "removed": [], "set_aside": []}
+def files(d):
+    out = []
+    for base, dirs, names in os.walk(d, followlinks=False):
+        dirs[:] = sorted(x for x in dirs if not os.path.islink(os.path.join(base, x)) and not x.startswith("."))
+        for n in sorted(names):
+            p = os.path.join(base, n)
+            if stat.S_ISREG(os.lstat(p).st_mode) and not n.startswith("."):
+                out.append(os.path.relpath(p, d).replace(os.sep, "/"))
+    return sorted(out)
+def tree_hash(d):
+    h = hashlib.sha256()
+    for rel in files(d):
+        h.update(rel.encode() + b"\0")
+        with open(os.path.join(d, rel), "rb") as f:
+            h.update(hashlib.sha256(f.read()).digest())
+    return h.hexdigest()
+def copy(s, d):
+    tmp = d + ".eca-tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    for rel in files(s):
+        t = os.path.join(tmp, rel)
+        os.makedirs(os.path.dirname(t), mode=0o700, exist_ok=True)
+        shutil.copyfile(os.path.join(s, rel), t); os.chmod(t, 0o600)
+    os.replace(tmp, d)
+for p in (root, cat):
+    if os.path.islink(p):
+        print(json.dumps({"error": "skills folder is a link"})); sys.exit(1)
+os.makedirs(cat, mode=0o700, exist_ok=True)
+try:
+    with open(mpath) as f:
+        man = json.load(f)
+    assert isinstance(man.get("skills"), dict)
+except Exception:
+    man = {"version": 1, "skills": {}}
+pack = {n: os.path.join(src, n) for n in sorted(os.listdir(src))
+        if os.path.isfile(os.path.join(src, n, "SKILL.md"))}
+for name, sdir in pack.items():
+    target = os.path.join(cat, name); new = tree_hash(sdir); owned = name in man["skills"]
+    if os.path.lexists(target):
+        if not owned:
+            res["kept_own"].append(name); continue
+        cur = tree_hash(target) if os.path.isdir(target) and not os.path.islink(target) else ""
+        if cur == new:
+            man["skills"][name] = new; res["unchanged"].append(name); continue
+        if cur != man["skills"][name]:
+            aside = os.path.join(hh, "eca-skills-replaced"); os.makedirs(aside, mode=0o700, exist_ok=True)
+            os.replace(target, os.path.join(aside, name + "-" + time.strftime("%Y%m%d%H%M%S")))
+            res["set_aside"].append(name)
+        elif os.path.islink(target):
+            os.unlink(target)
+        else:
+            shutil.rmtree(target)
+        copy(sdir, target); res["updated"].append(name)
+    else:
+        copy(sdir, target); res["installed"].append(name)
+    man["skills"][name] = new
+for name in [n for n in man["skills"] if n not in pack]:
+    target = os.path.join(cat, name)
+    if os.path.isdir(target) and not os.path.islink(target) and tree_hash(target) == man["skills"][name]:
+        shutil.rmtree(target); res["removed"].append(name)
+    del man["skills"][name]
+desc, dsrc = os.path.join(cat, "DESCRIPTION.md"), os.path.join(src, "DESCRIPTION.md")
+if os.path.isfile(dsrc):
+    with open(dsrc, "rb") as f:
+        body = f.read()
+    dh = hashlib.sha256(body).hexdigest(); cur = None
+    if os.path.isfile(desc) and not os.path.islink(desc):
+        with open(desc, "rb") as f:
+            cur = hashlib.sha256(f.read()).hexdigest()
+    if (cur is None and not os.path.lexists(desc)) or (cur is not None and cur == man.get("description")):
+        if cur != dh:
+            with open(desc + ".eca-tmp", "wb") as f:
+                f.write(body)
+            os.chmod(desc + ".eca-tmp", 0o600); os.replace(desc + ".eca-tmp", desc)
+        man["description"] = dh
+    elif cur == dh:
+        man["description"] = dh
+man["version"] = 1; man["updated"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+with open(mpath + ".eca-tmp", "w") as f:
+    json.dump(man, f, indent=1, sort_keys=True)
+os.chmod(mpath + ".eca-tmp", 0o600); os.replace(mpath + ".eca-tmp", mpath)
+print(json.dumps(res))
+'''
+
+
+def install_skills(a: dict) -> None:
+    """Install or refresh the ECA skills in a leader's Hermes skills folder. Never fatal."""
+    try:
+        if not SKILLS_SRC.is_dir():
+            return
+        r = run_as(a, [PY, "-I", "-c", SKILLS_HELPER], timeout=120, stdin=json.dumps({"src": str(SKILLS_SRC)}))
+        res = json.loads((r.stdout or "").strip().splitlines()[-1])
+        changed = {k: v for k, v in res.items() if v and k != "unchanged"}
+        if changed:
+            log(f"{a['slug']}: ECA skills: " + "; ".join(
+                f"{k.replace('_', ' ')} {', '.join(v) if isinstance(v, list) else v}" for k, v in changed.items())[:400])
+        else:
+            log(f"{a['slug']}: ECA skills: {len(res.get('unchanged') or [])} in place, nothing to change")
+    except Exception as exc:
+        log(f"{a['slug']}: could not install the ECA skills ({type(exc).__name__})")
+
+
+def prepare_known_homes() -> None:
+    """At boot, off the main thread: take every existing home through the image steps and the skills
+    refresh, so the backup exists and the home is ready before its owner next opens it."""
+    with _lock:
+        agents = [a for a in _state["agents"].values() if a.get("provisioned")]
+    for a in agents:
+        if _stopping.is_set():
+            return
+        try:
+            with _prep_lock(a):
+                if _alive((_runtime.get(a["slug"]) or {}).get("gateway")):
+                    continue                 # already opened and started; provision() did this
+                image_backup(a)
+                post_upgrade(a)
+                install_skills(a)
+        except Exception as exc:
+            log(f"{a.get('slug')}: could not prepare the workspace for this image: {str(exc)[:200]}")
+
+
 def provision(a: dict, bare: bool = False) -> None:
     """Set up (or repair) a leader's Hermes home. Safe to run on every start.
     `bare` is for the self-test accounts: the Webapp only, no model, no data."""
+    if not bare:
+        with _prep_lock(a):
+            image_backup(a)     # before any program of a new image touches an existing home
     r = run_as(a, [HERMES, "--version"], timeout=180)     # creates the home layout
     if r.returncode != 0:
         raise RuntimeError("hermes did not start in the workspace")
@@ -418,6 +816,10 @@ def provision(a: dict, bare: bool = False) -> None:
         for res in home_ops(a, writes):
             if not res.get("ok"):
                 raise RuntimeError("could not write the workspace settings")
+    if not bare:
+        with _prep_lock(a):
+            post_upgrade(a)     # once per image, before the gateway starts
+            install_skills(a)
     _quarantine_autorun(a)
     if eng == "codex":
         _codex_setup(a)
@@ -1414,7 +1816,9 @@ def main() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     threading.Thread(target=keeper, daemon=True).start()
     threading.Thread(target=limits, daemon=True).start()
-    log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; data in {DATA}"
+    threading.Thread(target=prepare_known_homes, daemon=True).start()
+    log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; "
+        f"image {_image_label(IMAGE_ID) if IMAGE_ID else 'unrecorded'}; data in {DATA}"
         f"{' (on its own disk)' if os.path.ismount(DATA) else ' (NOT on a disk: lost at restart)'}")
     if SELFTEST:
         # Loaded by its full path: with python -I the script's own folder is not on the import path.
