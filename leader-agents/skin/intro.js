@@ -1,4 +1,5 @@
-/* ECA Agent: the opening. Four lights (the four clubs) meet and form an emerald, drawn live.
+/* ECA Agent: the opening. Four lights (the four clubs) meet and form an emerald, drawn live,
+   and the emerald speaks: its line is written out beneath it while its light beats with the words.
    Plays once per browser session, covers the blank seconds while the screen loads, and is
    skipped for anyone who asks their device for reduced motion or has no WebGL. Click or press
    a key to skip. Nothing here reads or sends any data except the person's own first name
@@ -20,7 +21,7 @@
   if (!gl) return;
   var VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
   var FS = `precision highp float;
-uniform vec2 R;uniform float T;uniform vec4 P[42];
+uniform vec2 R;uniform float T;uniform float S;uniform vec4 P[42];
 const int NPL=42;
 mat3 rotY(float a){float c=cos(a),s=sin(a);return mat3(c,0.,-s,0.,1.,0.,s,0.,c);}
 mat3 rotX(float a){float c=cos(a),s=sin(a);return mat3(1.,0.,0.,0.,c,s,0.,-s,c);}
@@ -102,8 +103,8 @@ void main(){
   float fit=min(1.,asp*.82);
   float gs=eob((t-1.28)/.9)*step(1.28,t);
   float st=smoothstep(2.75,3.75,t);st=st*st*(3.-2.*st);
-  float sc=mix(gs*.86*fit,.34*fit,st);
-  vec2 off=vec2(0.,mix(0.,.135,st));
+  float sc=mix(gs*.86*fit,.52*fit,st)*(1.+.03*S);
+  vec2 off=vec2(0.,mix(0.,.09,st));
   if(gs>0.001){
     vec2 ug=uv-off;
     vec3 ro=vec3(0.,0.,-4.6),rd=normalize(vec3(ug,1.55));
@@ -113,10 +114,10 @@ void main(){
     float l=length(ug);
     float ang=atan(ug.y,ug.x);
     float rays=pow(abs(sin(ang*6.+t*.5))*abs(sin(ang*11.-t*.35))+.02,2.4);
-    float rayAmt=smoothstep(1.6,2.5,t)*(1.-st*.8);
+    float rayAmt=smoothstep(1.6,2.5,t)*(1.-st*.6)+S*.55*st;
     col+=vec3(.12,.75,.45)*rays*rayAmt*exp(-l*3.4)*.4;
-    col+=vec3(.03,.32,.19)*exp(-l*l*(6.+st*30.))*gs*.7;
-    col=mix(col,g.rgb,g.a);}
+    col+=vec3(.03,.32,.19)*exp(-l*l*(6.+st*9.))*gs*(.7+S*1.5);
+    col=mix(col,g.rgb*(1.+S*.4),g.a);}
   col=1.-exp(-col*1.5);
   col=pow(col,vec3(.82));
   // fine grain so the dark never bands
@@ -143,7 +144,7 @@ void main(){
  tier(-38,1.0,-.07);tier(-57,.62,-.42);
  P.push(0,-1,0,.82);         // culet
  gl.uniform4fv(gl.getUniformLocation(pr,"P"),new Float32Array(P))})();
-  var uR = gl.getUniformLocation(pr, "R"), uT = gl.getUniformLocation(pr, "T");
+  var uR = gl.getUniformLocation(pr, "R"), uT = gl.getUniformLocation(pr, "T"), uS = gl.getUniformLocation(pr, "S");
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
   var box = el("div"); box.id = "eca-intro"; box.setAttribute("aria-hidden", "true");
@@ -151,19 +152,37 @@ void main(){
   [["Everett", "06902"], ["Wallingford", "06904"], ["Columbia", "40059"], ["Ballinger", "40054"]].forEach(function (c, i) {
     var s = el("span", "eca-intro-club c" + (i + 1), c[0]); s.appendChild(el("b", "", c[1])); box.appendChild(s);
   });
-  var mid = el("div", "eca-intro-mid"), img = el("img", "eca-intro-logo");
-  img.alt = ""; img.src = "/_eca/static/eca-logo-dark.png";
+  var say = el("div", "eca-intro-say"); box.appendChild(say);
   var hr = new Date().getHours(), hello = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
-  var tag = el("div", "eca-intro-tag", hello);
-  mid.appendChild(img); mid.appendChild(tag); box.appendChild(mid);
+  var lines = [hello + ".", "What are we working on?"];
   document.documentElement.appendChild(box);
   try { sessionStorage.setItem("eca.intro", "1"); } catch (e) {}
   try {
     fetch("/_eca/whoami", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { var first = d && d.name ? String(d.name).trim().split(/\s+/)[0] : ""; if (first) tag.textContent = hello + ", " + first; })
+      .then(function (d) { var first = d && d.name ? String(d.name).trim().split(/\s+/)[0] : ""; if (first && !typed) lines[0] = hello + ", " + first + "."; })
       .catch(function () {});
   } catch (e) {}
+
+  // The emerald speaks. Each line is written a letter at a time; every letter gives the stone a
+  // beat of light (stronger on vowels), which the picture reads as S and lets fade.
+  var SPEAK_AT = 3.05, PER = 0.034, GAP = 0.42, typed = 0, pulse = 0, rows = [], spoken = false, doneAt = 0;
+  function speak(t) {
+    if (t < SPEAK_AT) return;
+    if (!rows.length) lines.forEach(function () { var r = el("div", "eca-intro-line"); say.appendChild(r); rows.push(r); });
+    var at = SPEAK_AT, n = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var want = Math.max(0, Math.min(lines[i].length, Math.floor((t - at) / PER)));
+      if (rows[i].textContent.length !== want) {
+        var ch = lines[i].charAt(want - 1);
+        rows[i].textContent = lines[i].slice(0, want);
+        if (want && /[a-z]/i.test(ch)) pulse = Math.max(pulse, /[aeiou]/i.test(ch) ? 1 : 0.6);
+      }
+      n += want; at += lines[i].length * PER + GAP;
+    }
+    typed = n;
+    if (!spoken && t >= at - GAP) { spoken = true; doneAt = t; }
+  }
 
   function size() {
     var d = Math.min(1.5, window.devicePixelRatio || 1), w = Math.round(cv.clientWidth * d), h = Math.round(cv.clientHeight * d);
@@ -171,7 +190,7 @@ void main(){
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     gl.viewport(0, 0, w, h); gl.uniform2f(uR, w, h);
   }
-  var MIN = 4.3, MAX = 10, t0 = 0, raf = 0, ended = false;
+  var HOLD = 1.25, MAX = 12, t0 = 0, raf = 0, ended = false, last = 0;
   function ready() { return !!document.querySelector('p.wordmark,[data-slot="aui_thread-content"],li[data-slot="sidebar-menu-item"]'); }
   function end() {
     if (ended) return; ended = true;
@@ -182,8 +201,10 @@ void main(){
   function frame(now) {
     if (!t0) { t0 = now; box.classList.add("eca-intro-run"); }
     var t = (now - t0) / 1000;
-    size(); gl.uniform1f(uT, t); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    if (!ended && ((t >= MIN && ready()) || t >= MAX)) end();
+    speak(t);
+    pulse *= Math.pow(0.0016, Math.min(0.1, (now - (last || now)) / 1000)); last = now;   // fades in about a sixth of a second
+    size(); gl.uniform1f(uT, t); gl.uniform1f(uS, pulse); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (!ended && ((spoken && t >= doneAt + HOLD && ready()) || t >= MAX)) end();
     raf = requestAnimationFrame(frame);
   }
   box.addEventListener("click", end);
