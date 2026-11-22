@@ -4,25 +4,15 @@
 <link rel="stylesheet" href="/_eca/static/connections.css">
 </head><body>
 <main data-service="__SVC__" data-ai="__AI__" data-portal="__PORTAL__">
-<header class="top">
-  <a class="back" href="/_eca/open">← Back to my agent</a>
-  <img class="logo" src="/_eca/static/eca-logo-dark.png" alt="ECA">
-</header>
-<section class="hero">
+<nav><a href="/_eca/open">← ECA Agent</a></nav>
+<header>
   <h1>Connections</h1>
-  <p>Apps your agent can work with. Each connection is yours alone, and you can remove it at any time.</p>
-  <div class="search"><span>⌕</span><input id="q" type="search" placeholder="Search connections" autocomplete="off"></div>
-  <div class="tabs" id="tabs">
-    <button data-f="all" class="on">All</button>
-    <button data-f="on">Connected</button>
-    <button data-f="available">Available</button>
-    <button data-f="soon">Coming soon</button>
-  </div>
-</section>
-<section id="grid" class="grid" aria-live="polite"></section>
-<p class="empty" id="empty" hidden>No connection matches that search.</p>
-<footer>ECA checks every connection before adding it, so nothing you connect can leak club or member data.
-Want one that isn't here? Tell Ephriam.</footer>
+  <p>Choose what your agent can work with. Connections are private to you and can be removed at any time.</p>
+  <input id="q" type="search" placeholder="Search" autocomplete="off" aria-label="Search connections">
+</header>
+<div id="list"></div>
+<p class="empty" id="empty" hidden>Nothing matches that search.</p>
+<footer>Every connection is reviewed by ECA before it appears here.</footer>
 </main>
 <script src="/_eca/static/connections.js"></script>
 </body></html>
