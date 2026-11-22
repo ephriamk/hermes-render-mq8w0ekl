@@ -938,6 +938,22 @@ def _codex_setup(a: dict) -> None:
         res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600, "content": fixed}])
         if not res[0].get("ok"):
             raise RuntimeError("could not write the ChatGPT settings")
+    if os.environ.get("ECA_CODEX_PROBE") == "1":
+        # Temporary: which no-sandbox setting does this Codex accept? Key names only, never values.
+        try:
+            tops = [ln.split("=", 1)[0].strip() for ln in fixed.split("\n[", 1)[0].splitlines()
+                    if "=" in ln and not ln.lstrip().startswith("#")]
+            log(f"{a['slug']}: codex probe: top-level keys {tops}; managed default_permissions "
+                f"{re.findall(r'(?m)^default_permissions.*$', fixed)}")
+            for args in (["-c", 'default_permissions=":danger-no-sandbox"', "login", "status"],
+                         ["-c", 'default_permissions=":danger-full-access"', "login", "status"],
+                         ["-c", 'default_permissions=":nonsense-profile"', "login", "status"],
+                         ["sandbox", "--help"], ["--version"]):
+                r = run_as(a, [CODEX] + args, timeout=40)
+                out = ((r.stdout or "") + " | " + (r.stderr or "")).replace("\n", " / ")[:420]
+                log(f"{a['slug']}: codex probe {args[:2]}: rc={r.returncode} {out}")
+        except Exception as exc:
+            log(f"{a['slug']}: codex probe failed: {exc}")
 
 
 # ───────────────────────────── processes ─────────────────────────────
