@@ -73,7 +73,7 @@ void main(){
   vec3 col=g.rgb*(1.+S*.45);
   col=1.-exp(-col*1.5);col=pow(col,vec3(.82));
   float l=length(uv);
-  float halo=exp(-l*l*7.5)*(.30+.75*S)*(1.-g.a);
+  float halo=exp(-l*l*7.5)*(.30+.75*S)*(1.-g.a)*smoothstep(.5,.3,l);   // gone before the edge of its frame
   gl_FragColor=vec4(col*g.a+vec3(.10,.92,.55)*halo*.6,g.a+halo*.6);}`;
   var eng = null, gl = null, U = {}, items = [], raf = 0, last = 0;
   var ang = 0.6, spin = 0.45, pulse = 0, lookX = 0, lookY = 0, tX = 0, tY = 0, clock = 0, dead = false;

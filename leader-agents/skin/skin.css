@@ -322,6 +322,7 @@ form:has(textarea:focus-visible), form:has([role="textbox"]:focus) {        /* [
 p.wordmark.eca-has-logo { position: absolute !important; width: 1px !important; height: 1px !important; margin: -1px !important;
   padding: 0 !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; border: 0 !important; }
 p.wordmark.eca-has-logo + p { font-size: 15px; }
-.eca-gem-think { width: 30px; height: 30px; flex: none; margin: -8px -4px -8px -6px; display: block; }
+.eca-gem-think { width: 24px; height: 24px; min-height: 24px; flex: none; align-self: center; margin: 0 0 0 -3px; display: block; }
+[data-slot="aui_response-loading"].eca-has-gem { min-height: 26px; overflow: visible; }
 [data-slot="aui_response-loading"].eca-has-gem .dither { display: none !important; }
 
