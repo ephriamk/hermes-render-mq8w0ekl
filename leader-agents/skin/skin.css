@@ -291,3 +291,25 @@ form:has(textarea:focus-visible), form:has([role="textbox"]:focus) {        /* [
 .w-draft-body { white-space: pre-wrap; margin-top: 12px; padding: 14px; border-radius: 12px; background: rgba(0,0,0,.2);
   border: 1px solid var(--eca-border); }
 @media (max-width: 640px) { .w-bar-row { grid-template-columns: 90px 1fr 70px; } .w-tl { grid-template-columns: 58px 12px 1fr; } }
+
+/* ── The opening (skin/intro.js): four lights form an emerald. Sits above everything, then fades. ── */
+#eca-intro { position: fixed; inset: 0; z-index: 2147483600; background: #020504; overflow: hidden; cursor: pointer;
+  opacity: 1; transition: opacity 750ms cubic-bezier(.16,1,.3,1); }
+#eca-intro.eca-intro-out { opacity: 0; pointer-events: none; }
+#eca-intro canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.eca-intro-club { position: absolute; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: clamp(9px, 1.05vw, 12px); letter-spacing: .2em; color: #6ee7b7; opacity: 0; text-transform: uppercase; }
+.eca-intro-club b { display: block; color: #7fa08f; font-weight: 400; letter-spacing: .14em; margin-top: 3px; }
+.eca-intro-club.c1 { left: 6%; top: 9%; } .eca-intro-club.c2 { right: 6%; top: 9%; text-align: right; }
+.eca-intro-club.c3 { left: 6%; bottom: 9%; } .eca-intro-club.c4 { right: 6%; bottom: 9%; text-align: right; }
+.eca-intro-run .eca-intro-club { animation: ecaIntroClub 1.35s ease forwards; }
+.eca-intro-run .eca-intro-club.c2 { animation-delay: .07s; } .eca-intro-run .eca-intro-club.c3 { animation-delay: .14s; }
+.eca-intro-run .eca-intro-club.c4 { animation-delay: .21s; }
+.eca-intro-mid { position: absolute; left: 0; right: 0; top: 60%; display: grid; justify-items: center; text-align: center; }
+.eca-intro-logo { height: clamp(26px, 3.8vw, 46px); width: auto; margin-bottom: 6px; opacity: 0; }
+.eca-intro-tag { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #7fa08f;
+  font-size: clamp(10px, 1.2vw, 13px); letter-spacing: .2em; text-transform: uppercase; margin-top: 14px; opacity: 0; }
+.eca-intro-run .eca-intro-logo { animation: ecaIntroRise 1s cubic-bezier(.16,1,.3,1) 3.25s forwards; }
+.eca-intro-run .eca-intro-tag { animation: ecaIntroRise 1s cubic-bezier(.16,1,.3,1) 3.55s forwards; }
+@keyframes ecaIntroClub { 0% { opacity: 0; transform: translateY(4px); } 18%, 62% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+@keyframes ecaIntroRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
