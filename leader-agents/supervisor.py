@@ -429,6 +429,28 @@ unless {name} asks for them.
 """
 
 
+# Each open chat keeps its own programs alive (about 500 MB on the ChatGPT engine: Codex plus its
+# tool server). The engine's defaults keep up to 128 chats for an hour each, so five chats in ten
+# minutes passed the memory cap and the workspace was stopped mid-answer (found 11-22). Keep the two
+# most recent chats warm and drop idle ones after ten minutes; a dropped chat reopens from its saved
+# history on its next message, and a chat that is mid-answer is never dropped.
+CHAT_CACHE = ("  agent_cache:\n"
+              "    max_size: 2\n"
+              "    idle_ttl_secs: 600\n")
+
+
+def with_chat_cache(cfg_text: str):
+    """The workspace settings with the chat limits in place, or None when there is nothing to
+    change (already set, or an `agent:` line in a form this does not edit)."""
+    if "agent_cache:" in cfg_text:
+        return None
+    if re.search(r"(?m)^agent:[ \t]*(#.*)?$", cfg_text):
+        return re.sub(r"(?m)^(agent:[ \t]*(#.*)?\n)", lambda m: m.group(1) + CHAT_CACHE, cfg_text, count=1)
+    if re.search(r"(?m)^agent:", cfg_text):
+        return None
+    return cfg_text.rstrip("\n") + "\nagent:\n" + CHAT_CACHE
+
+
 def _config_text(a: dict, bare: bool) -> str:
     text = ("webapp:\n"
             "  enabled: true\n"
@@ -445,7 +467,7 @@ def _config_text(a: dict, bare: bool) -> str:
         model = ("model:\n"
                  f"  provider: {PROVIDER}\n"
                  f"  default: {DEFAULT_MODEL}\n")
-    return (model + text +
+    return (model + text + "agent:\n" + CHAT_CACHE +
             "mcp_servers:\n"
             "  eca:\n"
             f"    url: {BACKEND}/api/intel/mcp\n"
@@ -834,6 +856,13 @@ def provision(a: dict, bare: bool = False) -> None:
             or (eng == "codex" and f"default: {CODEX_MODEL}" not in cfg_text):
         # First set-up, or the Webapp block was removed: without it the workspace cannot open.
         writes.append({"op": "write", "path": cfg, "content": _config_text(a, bare), "mode": 0o600})
+    elif not bare:
+        limited = with_chat_cache(cfg_text)
+        if limited:
+            writes.append({"op": "write", "path": cfg, "content": limited, "mode": 0o600})
+            log(f"{a['slug']}: chat limits set (2 warm chats, idle ones closed after 10 minutes)")
+        elif "agent_cache:" not in cfg_text:
+            log(f"{a['slug']}: chat limits NOT set: the settings file has an agent line in another form")
     # The agent's standing brief. Written once, and refreshed when ECA's version of it changes,
     # but only while the copy in the home is still the one ECA wrote (a leader's own edits stay).
     soul_text = SOUL.format(name=a.get("name") or a.get("username") or "this leader",
