@@ -1814,6 +1814,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
+    # A fresh browser asks for ~150 files at once and nginx checks each with /_auth. The default
+    # waiting line of 5 refused the overflow ("Resource temporarily unavailable"), the page got
+    # 503s on some files and showed "couldn't load" (found 11-22).
+    request_queue_size = 1024
 
     def get_request(self):
         request, _ = super().get_request()
@@ -1822,6 +1826,7 @@ class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
 class TcpServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
+    request_queue_size = 1024
 
 
 def make_server():
