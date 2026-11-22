@@ -103,9 +103,47 @@
       }
     }
   }
+  // The character keeps you company beside an open chat: it thinks while the agent works, talks
+  // while an answer arrives, and for a few seconds afterwards looks pleased or concerned by what
+  // the answer's cards say (their "good" / "bad" tones). On the empty screen the large one takes over.
+  var pal = null, palState = "idle", palLen = 0, palTimer = null;
+  function companion() {
+    var gem = window.ECAEmerald; if (!gem) return;
+    var open = !!document.querySelector('[data-slot="aui_thread-content"]') && !document.querySelector("p.wordmark") &&
+               !document.getElementById("eca-intro") && window.innerWidth >= 900;
+    if (!open) { if (pal) pal.style.display = "none"; if (palState !== "idle") { palState = "idle"; clearTimeout(palTimer); gem.mood("idle"); } return; }
+    if (!pal) {
+      pal = el("div", { id: "eca-pal", "aria-hidden": "true" });
+      var cv = el("canvas", {}); pal.appendChild(cv);
+      document.body.appendChild(pal);
+      if (!gem.attach(cv, { mode: "idle", face: true })) { pal.remove(); pal = null; return; }
+    }
+    pal.style.display = "";
+    var loading = document.querySelector('[data-slot="aui_response-loading"]');
+    var streaming = document.querySelector('[data-slot="aui_message-streaming-marker"]');
+    var msgs = document.querySelectorAll('[data-slot="aui_assistant-message-content"]');
+    var lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
+    if (loading) {
+      if (palState !== "thinking") { palState = "thinking"; clearTimeout(palTimer); gem.mood("thinking"); }
+    } else if (streaming) {
+      if (palState !== "speaking") { palState = "speaking"; clearTimeout(palTimer); gem.mood("speaking"); palLen = 0; }
+      var n = lastMsg ? (lastMsg.textContent || "").length : 0;
+      if (n > palLen) { gem.talk(420); gem.beat(0.7); }
+      palLen = n;
+    } else if (palState === "thinking" || palState === "speaking") {
+      // The answer is in. Read its cards: more red than green is concern, any green is pleased.
+      var bad = lastMsg ? lastMsg.querySelectorAll(".eca-w .t-bad").length : 0;
+      var good = lastMsg ? lastMsg.querySelectorAll(".eca-w .t-good").length : 0;
+      var after = bad > good ? "worried" : good > 0 ? "happy" : "idle";
+      palState = "after"; gem.mood(after);
+      clearTimeout(palTimer);
+      palTimer = setTimeout(function () { if (palState === "after") { palState = "idle"; gem.mood("idle"); } }, 6500);
+    }
+  }
   function strip() {
     toolLabels();
     thinkingGems();
+    companion();
     if (document.title !== TITLE) document.title = TITLE;
     if (BLOCKED_ROUTES.test(location.hash)) { location.hash = "#/"; }
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');

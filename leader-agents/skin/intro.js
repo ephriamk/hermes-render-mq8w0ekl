@@ -72,6 +72,7 @@ vec4 gem(vec3 ro,vec3 rd,float sc,mat3 M,mat3 Mi){
   vec3 col=mix(inside*1.5+vec3(.0,.035,.02),refl,F);
   // crisp facet edges catch a little light
   return vec4(col,1.);}
+float sdBox(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}
 float eob(float x){x=clamp(x,0.,1.);float c1=1.70158,c3=c1+1.;return 1.+c3*pow(x-1.,3.)+c1*pow(x-1.,2.);}
 void main(){
   vec2 uv=(gl_FragCoord.xy-.5*R)/R.y;float t=T;
@@ -108,16 +109,30 @@ void main(){
   if(gs>0.001){
     vec2 ug=uv-off;
     vec3 ro=vec3(0.,0.,-4.6),rd=normalize(vec3(ug,1.55));
-    float a=t*.9+.6,b=.44+sin(t*.7)*.2;
+    // as it settles it turns its flat top to you: that is its face
+    float a=mix(t*.9+.6,sin(t*.55)*.16,st),b=mix(.44+sin(t*.7)*.2,-1.34+sin(t*.7)*.04,st);
     mat3 M=rotX(b)*rotY(a),Mi=rotY(-a)*rotX(-b);
     vec4 g=gem(ro,rd,sc,M,Mi);
+    if(st>.01&&g.a>0.){
+      // eyes and a mouth of light (same face as skin/emerald.js); the mouth opens with each beat
+      float k=sc/1.14;vec2 pf=(ug-vec2(0.,.012*k))/k;
+      vec2 pq=(pf+vec2(0.,.035))*vec2(1.,1.25);g.rgb*=1.-.64*st*exp(-dot(pq,pq)*20.);
+      float eye=0.,glow=0.;
+      for(int i=0;i<2;i++){float sgn=i==0?-1.:1.;vec2 e=pf-vec2(sgn*.108,0.);float d=sdBox(e,vec2(.031,.066),.031);
+        eye=max(eye,smoothstep(.006,-.004,d));glow+=exp(-max(d,0.)*42.);}
+      float mo=clamp(S,0.,1.);vec2 m=pf-vec2(0.,-.092);
+      float dl=max(abs(m.y-4.6*m.x*m.x)-.0075,abs(m.x)-.05);
+      float dopen=sdBox(m+vec2(0.,.012*mo),vec2(.05*(.5+.12*mo),.01+.036*mo),.01+.03*mo);
+      float dm=mix(dl,dopen,smoothstep(.04,.3,mo));
+      eye=max(eye,smoothstep(.006,-.004,dm));glow+=exp(-max(dm,0.)*42.)*.7;
+      g.rgb=mix(g.rgb,vec3(2.2,2.7,2.45),eye*st);g.rgb+=vec3(.25,1.,.7)*glow*.2*st*(1.-eye);}
     float l=length(ug);
     float ang=atan(ug.y,ug.x);
     float rays=pow(abs(sin(ang*6.+t*.5))*abs(sin(ang*11.-t*.35))+.02,2.4);
     float rayAmt=smoothstep(1.6,2.5,t)*(1.-st*.6)+S*.55*st;
     col+=vec3(.12,.75,.45)*rays*rayAmt*exp(-l*3.4)*.4;
     col+=vec3(.03,.32,.19)*exp(-l*l*(6.+st*9.))*gs*(.7+S*1.5);
-    col=mix(col,g.rgb*(1.+S*.4),g.a);}
+    col=mix(col,g.rgb*(1.+S*.4*(1.-st*.6)),g.a);}
   col=1.-exp(-col*1.5);
   col=pow(col,vec3(.82));
   // fine grain so the dark never bands

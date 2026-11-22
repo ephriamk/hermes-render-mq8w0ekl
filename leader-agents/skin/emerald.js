@@ -4,6 +4,9 @@
    window.ECAEmerald.attach(canvas, { mode, face })   draw the character into a square <canvas>
        mode "idle" (default) follows the shared mood; mode "thinking" is always thinking
        face false gives the plain turning stone (default: a face at 40 px and up)
+   window.ECAEmerald.mouth(level)    open the mouth 0..1 right now; call it many times a second with
+                                     the loudness of a voice and the mouth follows it (voice mode)
+   window.ECAEmerald.talk(ms)        move the mouth as if talking for the next ms (text arriving)
    window.ECAEmerald.mood(name)      "idle" | "thinking" | "speaking" | "happy" | "worried" | "sleep"
    window.ECAEmerald.beat(strength)  one beat of light (0..1), e.g. per word spoken
    window.ECAEmerald.say(el, text, done)   write text into el a letter at a time, beating with it
@@ -17,7 +20,7 @@
   var VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
   var FS = `precision highp float;
 uniform vec2 R;uniform float A;uniform float B;uniform float S;uniform float Y;uniform vec4 P[42];
-uniform float F;uniform vec2 L;uniform float O;uniform float MH;uniform float MW;
+uniform float F;uniform vec2 L;uniform float O;uniform float MH;uniform float MW;uniform float MO;uniform float MC;
 const int NPL=42;
 mat3 rotY(float a){float c=cos(a),s=sin(a);return mat3(c,0.,-s,0.,1.,0.,s,0.,c);}
 mat3 rotX(float a){float c=cos(a),s=sin(a);return mat3(1.,0.,0.,0.,c,s,0.,-s,c);}
@@ -82,7 +85,7 @@ void main(){
     // the face lives on the flat top of the stone, which is turned toward you
     vec2 c=vec2(0.,.012)+L*vec2(.034,.026);
     vec2 pf=uv-c;
-    col*=1.-.62*exp(-dot(pf*vec2(1.,1.5),pf*vec2(1.,1.5))*24.)*g.a;      // a quiet patch so the eyes read
+    vec2 pq=(pf+vec2(0.,.035))*vec2(1.,1.25);col*=1.-.64*exp(-dot(pq,pq)*20.)*g.a;      // a quiet patch so the eyes read
     float eye=0.,glow=0.;
     for(int i=0;i<2;i++){
       float sgn=i==0?-1.:1.;
@@ -96,6 +99,15 @@ void main(){
       eye=max(eye,smoothstep(.006,-.004,d));
       glow+=exp(-max(d,0.)*42.);
     }
+    // the mouth: a fine curved line at rest, opening into a rounded shape as it speaks (MO 0..1);
+    // MC bends it (up for pleased, down for concerned)
+    vec2 m=pf-vec2(0.,-.092);
+    float mw=.05+.018*MH;
+    float dl=max(abs(m.y-MC*m.x*m.x)-.0075,abs(m.x)-mw);
+    float dopen=sdBox(m+vec2(0.,.012*MO),vec2(mw*(.5+.12*MO),.01+.036*MO),.01+.03*MO);
+    float dm=mix(dl,dopen,smoothstep(.04,.3,MO));
+    eye=max(eye,smoothstep(.006,-.004,dm));
+    glow+=exp(-max(dm,0.)*42.)*.7;
     vec3 ec=vec3(.86,1.,.94);
     col=mix(col,ec*(1.+S*.25),eye*g.a);
     col+=vec3(.25,1.,.7)*glow*.16*g.a*(1.-eye);
@@ -104,6 +116,7 @@ void main(){
   gl_FragColor=vec4(col*g.a+vec3(.10,.92,.55)*halo*.6,g.a+halo*.6);}`;
   var eng = null, gl = null, U = {}, items = [], looks = {}, raf = 0, last = 0;
   var mood = "idle", pulse = 0, tX = 0, tY = 0, clock = 0, dead = false;
+  var mouthVal = 0, talkUntil = 0, active = Date.now(), SLEEP_AFTER = 180000;
 
   function build() {
     if (eng || dead) return !dead;
@@ -126,7 +139,7 @@ void main(){
        tier(-38,1.0,-.07);tier(-57,.62,-.42);
        P.push(0,-1,0,.82);         // culet
        gl.uniform4fv(gl.getUniformLocation(pr,"P"),new Float32Array(P))})();
-      ["R", "A", "B", "S", "Y", "F", "L", "O", "MH", "MW"].forEach(function (k) { U[k] = gl.getUniformLocation(pr, k); });
+      ["R", "A", "B", "S", "Y", "F", "L", "O", "MH", "MW", "MO", "MC"].forEach(function (k) { U[k] = gl.getUniformLocation(pr, k); });
       gl.clearColor(0, 0, 0, 0);
       return true;
     } catch (e) { dead = true; eng = null; gl = null; return false; }
@@ -134,7 +147,7 @@ void main(){
 
   // One "look" per distinct appearance on the page (face or plain, its mood): each is drawn once.
   function lookFor(key) {
-    return looks[key] || (looks[key] = { ang: 0.6, spin: 0.45, open: 1, mh: 0, mw: 0, lx: 0, ly: 0, nextBlink: clock + 1.5, blink: 0 });
+    return looks[key] || (looks[key] = { ang: 0.6, spin: 0.45, open: 1, mh: 0, mw: 0, mo: 0, mc: 4.6, lx: 0, ly: 0, nextBlink: clock + 1.5, blink: 0 });
   }
   function draw(o, m, face, size, dt) {
     var think = m === "thinking", sleep = m === "sleep";
@@ -156,13 +169,18 @@ void main(){
     var want = sleep ? 0.06 : m === "speaking" ? 0.72 + 0.28 * Math.min(1, pulse) : think ? 0.82 : m === "worried" ? 0.9 : 1;
     o.open += (want - o.open) * Math.min(1, dt * 10);
     o.mh += ((m === "happy" ? 1 : 0) - o.mh) * Math.min(1, dt * 8); o.mw += ((m === "worried" ? 0.55 : 0) - o.mw) * Math.min(1, dt * 8);
+    var chatter = Date.now() < talkUntil ? 0.28 + 0.72 * Math.abs(Math.sin(clock * 13.1) * Math.sin(clock * 7.3 + 1)) : 0;
+    var mouthWant = sleep ? 0 : Math.max(mouthVal, chatter);
+    o.mo += (mouthWant - o.mo) * Math.min(1, dt * 24);
+    var bend = m === "happy" ? 9 : m === "worried" ? -5.5 : think ? 1.2 : sleep ? 1 : m === "speaking" ? 3 : 4.6;
+    o.mc += (bend - o.mc) * Math.min(1, dt * 8);
     if (eng.width !== size) { eng.width = size; eng.height = size; }
     gl.viewport(0, 0, size, size); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform2f(U.R, size, size); gl.uniform1f(U.A, A); gl.uniform1f(U.B, B);
     gl.uniform1f(U.S, Math.min(1.2, Math.max(pulse, breathe)));
     gl.uniform1f(U.Y, Math.sin(clock * 1.3) * 0.018 + (m === "happy" ? Math.abs(Math.sin(clock * 5)) * 0.03 : 0));
     gl.uniform1f(U.F, face ? 1 : 0); gl.uniform2f(U.L, o.lx, o.ly); gl.uniform1f(U.O, o.open * lid);
-    gl.uniform1f(U.MH, o.mh); gl.uniform1f(U.MW, o.mw);
+    gl.uniform1f(U.MH, o.mh); gl.uniform1f(U.MW, o.mw); gl.uniform1f(U.MO, o.mo); gl.uniform1f(U.MC, o.mc);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
   function frame(now) {
@@ -172,10 +190,11 @@ void main(){
     var dt = Math.min(0.05, (now - (last || now)) / 1000); last = now;
     var live = items.filter(function (it) { return it.cv.offsetParent !== null && it.cv.clientWidth > 0; });
     if (live.length && !document.hidden) {
-      clock += dt; pulse *= Math.pow(0.0016, dt);
+      clock += dt; pulse *= Math.pow(0.0016, dt); mouthVal *= Math.pow(0.00002, dt);        // the mouth closes within a tenth of a second
+      var dozing = mood === "idle" && Date.now() - active > SLEEP_AFTER;                   // left alone, it nods off
       var dpr = Math.min(2, window.devicePixelRatio || 1), groups = {};
       live.forEach(function (it) {
-        var m = it.mode === "thinking" ? "thinking" : mood;
+        var m = it.mode === "thinking" ? "thinking" : dozing ? "sleep" : mood;
         var face = it.face === undefined ? it.cv.clientWidth >= 40 : !!it.face;
         var key = (face ? "f" : "p") + ":" + m;
         var g = groups[key] || (groups[key] = { m: m, face: face, want: 0, list: [] });
@@ -198,7 +217,9 @@ void main(){
   // It looks toward the pointer, so it seems to notice you.
   window.addEventListener("pointermove", function (e) {
     tX = (e.clientX / Math.max(1, window.innerWidth) - 0.5) * 2; tY = -(e.clientY / Math.max(1, window.innerHeight) - 0.5) * 2;
+    active = Date.now();
   }, { passive: true });
+  window.addEventListener("keydown", function () { active = Date.now(); }, { passive: true, capture: true });
   document.addEventListener("visibilitychange", function () { if (!document.hidden) wake(); });
 
   var MOODS = { idle: 1, thinking: 1, speaking: 1, happy: 1, worried: 1, sleep: 1 };
@@ -211,6 +232,8 @@ void main(){
       items.push({ cv: cv, ctx: ctx, mode: (opts && opts.mode) || "idle", face: opts ? opts.face : undefined }); wake(); return true;
     },
     mood: function (name) { if (name === undefined) return mood; if (MOODS[name]) mood = name; return mood; },
+    mouth: function (v) { mouthVal = Math.max(0, Math.min(1, Number(v) || 0)); active = Date.now(); },
+    talk: function (ms) { talkUntil = Math.max(talkUntil, Date.now() + (ms || 400)); active = Date.now(); },
     beat: function (v) { pulse = Math.max(pulse, Math.max(0, Math.min(1.2, v === undefined ? 1 : v))); },
     say: function (el, text, done) {
       var i = 0, self = this, t = String(text || ""), before = mood;
@@ -218,7 +241,8 @@ void main(){
       (function step() {
         if (!el.isConnected) { if (mood === "speaking") mood = before; return; }
         i += 1; el.textContent = t.slice(0, i);
-        var ch = t.charAt(i - 1); if (/[a-z]/i.test(ch)) self.beat(/[aeiou]/i.test(ch) ? 1 : 0.6);
+        var ch = t.charAt(i - 1);
+        if (/[a-z]/i.test(ch)) { var v = /[aeiou]/i.test(ch); self.beat(v ? 1 : 0.6); self.mouth(v ? 1 : 0.5); }
         if (i < t.length) setTimeout(step, /[.,!?]/.test(ch) ? 190 : 32);
         else { if (mood === "speaking") mood = before; if (done) done(); }
       })();
