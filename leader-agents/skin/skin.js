@@ -31,7 +31,7 @@
   var BLOCKED_ROUTES = /^#\/(capabilities|messaging|settings|bots|profiles|gateways|kanban|connectors|plugins|skills)(\/|\?|$)/;
   // Never touched: what people and the agent wrote.
   var KEEP = '[data-slot="aui_thread-content"],[data-slot="row-button"],[data-slot="pane-tab"],[role="textbox"],textarea,input,#eca-banner,#eca-chip,#eca-logo,#eca-side-mark,.xterm,pre,code';
-  var CHROME_IN_THREAD = '[data-slot="aui_error-card"],[data-slot="aui_system-message-root"]';
+  var CHROME_IN_THREAD = '[data-slot="aui_error-card"],[data-slot="aui_system-message-root"],[data-slot="aui_response-loading"]';
   var SWAPS = [
     [/Claude Subscription DirectSDK \(Experimental\)/g, "Claude"],
     [/claude-subscription-directsdk-experimental:\s*/g, ""],
@@ -105,6 +105,7 @@
   }
   function strip() {
     toolLabels();
+    thinkingGems();
     if (document.title !== TITLE) document.title = TITLE;
     if (BLOCKED_ROUTES.test(location.hash)) { location.hash = "#/"; }
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');
@@ -137,14 +138,47 @@
   // P5. The ECA logo beside the big wordmark, and a small monogram at the top of the sidebar.
   // Images are served from the skin folder (/_eca/static/). Decorative: the wordmark keeps the name.
   var STATIC = "/_eca/static/";
+  // The emerald is the assistant's face on the empty screen: the stone, then its greeting.
+  // The engine's big wordmark stays in the page as the accessible name but is not drawn.
+  var firstName = "";
+  function hello() {
+    var hr = new Date().getHours(), g = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening";
+    return g + (firstName ? ", " + firstName : "") + ".";
+  }
   function logo(p) {
     if (!p.classList.contains("eca-has-logo")) p.classList.add("eca-has-logo");
     var prev = p.previousElementSibling;
-    if (prev && prev.id === "eca-logo") return;
-    var old = document.getElementById("eca-logo"); if (old) old.remove();
-    var wrap = el("span", { id: "eca-logo", "aria-hidden": "true" });
-    wrap.appendChild(el("img", { src: STATIC + "eca-logo-dark.png", alt: "", height: "44" }));
+    if (prev && prev.id === "eca-gem-wrap") {
+      var line = prev.querySelector("#eca-gem-hello");
+      if (line && line.getAttribute("data-said") && line.getAttribute("data-name") !== firstName && !line.getAttribute("data-busy")) {
+        line.setAttribute("data-name", firstName); line.textContent = hello();
+      }
+      return;
+    }
+    var old = document.getElementById("eca-gem-wrap"); if (old) old.remove();
+    old = document.getElementById("eca-logo"); if (old) old.remove();
+    var wrap = el("div", { id: "eca-gem-wrap", "aria-hidden": "true" });
+    var cv = el("canvas", { id: "eca-gem-hero" }), line = el("div", { id: "eca-gem-hello" });
+    wrap.appendChild(cv); wrap.appendChild(line);
     p.parentNode.insertBefore(wrap, p);
+    var gem = window.ECAEmerald;
+    if (gem && gem.attach(cv, { mode: "idle" })) {
+      line.setAttribute("data-busy", "1"); line.setAttribute("data-name", firstName);
+      gem.say(line, hello(), function () { line.removeAttribute("data-busy"); line.setAttribute("data-said", "1"); });
+    } else {
+      cv.remove(); line.textContent = hello(); line.setAttribute("data-said", "1"); line.setAttribute("data-name", firstName);
+    }
+  }
+  // While the agent is working, a small emerald turns where the engine's square blinks.
+  function thinkingGems() {
+    var gem = window.ECAEmerald; if (!gem) return;
+    var spots = document.querySelectorAll('[data-slot="aui_response-loading"]');
+    for (var i = 0; i < spots.length; i++) {
+      if (spots[i].querySelector(".eca-gem-think")) continue;
+      var cv = el("canvas", { "class": "eca-gem-think", "aria-hidden": "true" });
+      spots[i].insertBefore(cv, spots[i].firstChild);
+      if (gem.attach(cv, { mode: "thinking" })) spots[i].classList.add("eca-has-gem"); else cv.remove();
+    }
   }
   function sideMark() {
     if (document.getElementById("eca-side-mark")) return;
@@ -283,6 +317,7 @@
       .then(function (d) {
         if (!d) return;
         if (d.service) service = d.service;
+        if (d.name) firstName = String(d.name).trim().split(/\s+/)[0] || "";
         chip(d.name, d.claude_signed_in);
         var needs = d.claude_signed_in === false;
         banner(needs);
