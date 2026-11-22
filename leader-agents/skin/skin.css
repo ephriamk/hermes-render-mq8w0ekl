@@ -243,7 +243,7 @@ form:has(textarea:focus-visible), form:has([role="textbox"]:focus) {        /* [
 .w-bar-v { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .w-legend { color: var(--eca-text-3); font-size: 12px; margin-top: 8px; display: flex; gap: 14px; flex-wrap: wrap; }
 /* line */
-.w-line-svg { width: 100%; height: auto; display: block; }
+.w-line-svg { width: 100%; max-width: 760px; height: auto; display: block; }
 .w-line-svg .w-grid { stroke: rgba(255,255,255,.06); stroke-width: 1; }
 .w-line-svg .w-ylab { fill: #7fa08f; font-size: 11px; }
 .w-line-svg .w-series { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; stroke: #7ed957; }

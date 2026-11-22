@@ -109,8 +109,11 @@
     if (hasTarget) {
       var ty = Y(d.target);
       g.appendChild(svg("line", { x1: L, x2: W - R, y1: ty, y2: ty, class: "w-target" }));
-      var tl = svg("text", { x: W - R, y: ty - 5, class: "w-tlab", "text-anchor": "end" });
-      tl.textContent = (d.target_label || "Target") + " " + fmt(num(d.target), d.unit); g.appendChild(tl);
+      // Left end, above the line, where the first points rarely reach; no second copy of the value
+      // when the label already carries a number.
+      var tl = svg("text", { x: L + 4, y: ty - 5, class: "w-tlab", "text-anchor": "start" });
+      var tname = String(d.target_label || "Target");
+      tl.textContent = /\d/.test(tname) ? tname : tname + " " + fmt(num(d.target), d.unit); g.appendChild(tl);
     }
     var marks = {};
     (d.marks || []).slice(0, 8).forEach(function (m) {
