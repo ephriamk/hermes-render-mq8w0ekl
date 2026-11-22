@@ -80,30 +80,61 @@
   function line(d) {
     var box = el("div", "eca-w w-line"); header(box, d);
     var labels = (d.labels || []).slice(0, 60), series = (d.series || []).slice(0, 5);
-    var W = 640, H = 220, P = 52, all = [];
+    var W = 640, H = 240, L = 52, R = 12, T = 16, B = 30, all = [];
     series.forEach(function (s) { (s.values || []).forEach(function (v) { all.push(num(v)); }); });
+    var hasTarget = d.target !== undefined && d.target !== null && isFinite(Number(d.target));
+    if (hasTarget) all.push(num(d.target));
     var max = Math.max.apply(null, all.concat([1])), min = Math.min.apply(null, all.concat([0]));
     var longest = Math.max.apply(null, series.map(function (s) { return (s.values || []).length; }).concat([0]));
     var span = (max - min) || 1, n = Math.max(labels.length, longest, 2);
+    function X(i) { return L + (W - L - R) * i / (n - 1); }
+    function Y(v) { return H - B - (num(v) - min) / span * (H - T - B); }
     var g = svg("svg", { viewBox: "0 0 " + W + " " + H, class: "w-line-svg", role: "img" });
     for (var k = 0; k <= 4; k++) {
-      var y = P + (H - 2 * P) * k / 4;
-      g.appendChild(svg("line", { x1: P, x2: W - 8, y1: y, y2: y, class: "w-grid" }));
-      var lab = svg("text", { x: P - 6, y: y + 4, class: "w-ylab", "text-anchor": "end" });
+      var y = T + (H - T - B) * k / 4;
+      g.appendChild(svg("line", { x1: L, x2: W - R, y1: y, y2: y, class: "w-grid" }));
+      var lab = svg("text", { x: L - 6, y: y + 4, class: "w-ylab", "text-anchor": "end" });
       lab.textContent = fmt(Math.round(max - (max - min) * k / 4), d.unit);
       g.appendChild(lab);
     }
+    // Date labels along the bottom: about six, always the first and the last.
+    var step = Math.max(1, Math.ceil((n - 1) / 6));
+    for (var i = 0; i < labels.length; i++) {
+      if (i % step !== 0 && i !== labels.length - 1) continue;
+      if (i !== labels.length - 1 && labels.length - 1 - i < step * 0.6) continue;
+      var xl = svg("text", { x: X(i), y: H - 8, class: "w-xlab",
+                             "text-anchor": i === 0 ? "start" : (i === labels.length - 1 ? "end" : "middle") });
+      xl.textContent = labels[i]; g.appendChild(xl);
+    }
+    if (hasTarget) {
+      var ty = Y(d.target);
+      g.appendChild(svg("line", { x1: L, x2: W - R, y1: ty, y2: ty, class: "w-target" }));
+      var tl = svg("text", { x: W - R, y: ty - 5, class: "w-tlab", "text-anchor": "end" });
+      tl.textContent = (d.target_label || "Target") + " " + fmt(num(d.target), d.unit); g.appendChild(tl);
+    }
+    var marks = {};
+    (d.marks || []).slice(0, 8).forEach(function (m) {
+      var idx = typeof m.index === "number" ? m.index : labels.indexOf(m.label);
+      if (idx >= 0) marks[idx] = m;
+    });
     series.forEach(function (s, si) {
-      var pts = (s.values || []).slice(0, n).map(function (v, i) {
-        var x = P + (W - P - 8) * i / (n - 1), yy = H - P - (num(v) - min) / span * (H - 2 * P);
-        return x.toFixed(1) + "," + yy.toFixed(1);
-      });
+      var vals = (s.values || []).slice(0, n);
+      var pts = vals.map(function (v, i) { return X(i).toFixed(1) + "," + Y(v).toFixed(1); });
       g.appendChild(svg("polyline", { points: pts.join(" "), class: "w-series s" + si + tone(s.tone) }));
+      vals.forEach(function (v, i) {
+        var m = si === 0 ? marks[i] : null;
+        var c = svg("circle", { cx: X(i).toFixed(1), cy: Y(v).toFixed(1), r: m ? 5 : 3,
+                                class: "w-dot s" + si + (m ? " w-mark" + tone(m.tone) : "") });
+        var tip = svg("title", {});
+        tip.textContent = (labels[i] || "") + ": " + fmt(num(v), d.unit) + (series.length > 1 ? " (" + (s.name || "") + ")" : "");
+        c.appendChild(tip); g.appendChild(c);
+        if (m && m.text) {
+          var mt = svg("text", { x: X(i), y: Math.max(11, Y(v) - 9), class: "w-mlab" + tone(m.tone), "text-anchor": "middle" });
+          mt.textContent = m.text; g.appendChild(mt);
+        }
+      });
     });
     box.appendChild(g);
-    var axis = el("div", "w-axis");
-    axis.appendChild(el("span", "", labels[0] || "")); axis.appendChild(el("span", "", labels[labels.length - 1] || ""));
-    box.appendChild(axis);
     var leg = el("div", "w-legend");
     series.forEach(function (s, si) { var sp = el("span", "w-key s" + si + tone(s.tone), "● " + (s.name || "")); leg.appendChild(sp); });
     box.appendChild(leg); footer(box, d); return box;

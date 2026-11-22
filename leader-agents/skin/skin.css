@@ -247,6 +247,16 @@ form:has(textarea:focus-visible), form:has([role="textbox"]:focus) {        /* [
 .w-line-svg .w-grid { stroke: rgba(255,255,255,.06); stroke-width: 1; }
 .w-line-svg .w-ylab { fill: #7fa08f; font-size: 11px; }
 .w-line-svg .w-series { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; stroke: #7ed957; }
+.w-line-svg .w-xlab { fill: #7fa08f; font-size: 11px; }
+.w-line-svg .w-target { stroke: #fbbf24; stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .8; }
+.w-line-svg .w-tlab { fill: #fbbf24; font-size: 11px; }
+.w-line-svg .w-dot { fill: #7ed957; stroke: #0c1512; stroke-width: 1.5; }
+.w-line-svg .w-dot.s1 { fill: #60a5fa; } .w-line-svg .w-dot.s2 { fill: #fbbf24; }
+.w-line-svg .w-dot.s3 { fill: #f472b6; } .w-line-svg .w-dot.s4 { fill: #a78bfa; }
+.w-line-svg .w-dot.w-mark { stroke: #fff; stroke-width: 2; }
+.w-line-svg .w-dot.w-mark.t-bad { fill: #f87171; } .w-line-svg .w-dot.w-mark.t-warn { fill: #fbbf24; }
+.w-line-svg .w-mlab { fill: #e8f3ec; font-size: 11px; font-weight: 600; }
+.w-line-svg .w-mlab.t-bad { fill: #f87171; } .w-line-svg .w-mlab.t-good { fill: #7ed957; }
 .w-line-svg .w-series.s1 { stroke: #60a5fa; } .w-line-svg .w-series.s2 { stroke: #fbbf24; }
 .w-line-svg .w-series.s3 { stroke: #f472b6; } .w-line-svg .w-series.s4 { stroke: #a78bfa; }
 .w-key.s0 { color: #7ed957; } .w-key.s1 { color: #60a5fa; } .w-key.s2 { color: #fbbf24; } .w-key.s3 { color: #f472b6; } .w-key.s4 { color: #a78bfa; }

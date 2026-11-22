@@ -367,7 +367,8 @@ them for prose. JSON must be valid; strings only, no HTML. Tones: good, bad, war
 
 - Headline numbers: {{"eca":"kpis","title":"...","items":[{{"label":"...","value":123,"unit":"$|%|...","delta":"+8% vs pace","tone":"good","hint":"..."}}]}}
 - Compare clubs or people: {{"eca":"bar","title":"...","unit":"%","items":[{{"label":"Everett","value":92,"target":100,"tone":"bad"}}]}}
-- Trend over time: {{"eca":"line","title":"...","labels":["Nov 1",...],"series":[{{"name":"This month","values":[...]}}]}}
+- Trend over time: {{"eca":"line","title":"...","unit":"$","labels":["Nov 1",...],"series":[{{"name":"This month","values":[...]}}],"target":2143,"target_label":"Daily pace for quota","marks":[{{"label":"Nov 16","text":"Best","tone":"good"}},{{"label":"Nov 3","text":"Lowest","tone":"bad"}}]}}
+  ("target" draws a dashed line; "marks" label the points you call out. Both optional.)
 - Rows and columns: {{"eca":"table","title":"...","columns":["..."],"align":["left","right"],"rows":[["a","b"],{{"cells":["a",{{"badge":"Not booked","tone":"bad"}}],"tone":"bad"}}]}}
 - People or to-dos (call lists, follow-ups): {{"eca":"list","title":"...","summary":"7 to call · 2 booked","items":[{{"title":"Name","detail":"...","meta":"...","badges":[{{"text":"Bought PT · 12 days ago","tone":"good"}}]}}]}}
 - A day's schedule: {{"eca":"timeline","title":"...","items":[{{"time":"6:00 PM","title":"Champions Training","who":"Coach","detail":"8 booked","badge":"Needs a coach","tone":"warn"}}]}}
