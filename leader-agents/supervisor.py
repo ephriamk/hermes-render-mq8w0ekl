@@ -1329,6 +1329,8 @@ def keeper() -> None:
                 rt.update(status="starting", detail="Restarting your agent", restarts=recent + [now], gateway=None)
                 threading.Thread(target=start_agent, args=(a,), daemon=True).start()
             elif IDLE_STOP_MINUTES and now - rt.get("last_seen", now) > IDLE_STOP_MINUTES * 60:
+                if has_scheduled_jobs(a):
+                    continue        # a stopped workspace would miss its scheduled runs
                 log(f"{a['slug']}: idle, stopping")
                 stop_agent(a)
 
@@ -1847,16 +1849,44 @@ def prepare_dirs() -> None:
     os.chmod(STATE_FILE.parent, 0o700)
 
 
+_jobs_seen: dict = {}     # slug -> (checked at, has active scheduled jobs?)
+
+
+def has_scheduled_jobs(a: dict) -> bool:
+    """Whether this leader has a scheduled job that is still due to run. Reads only the
+    scheduler's own job list, as the leader. Such a workspace is kept running (and restarted
+    after a deploy), because the scheduler lives inside it."""
+    now = time.time()
+    hit = _jobs_seen.get(a["slug"])
+    if hit and now - hit[0] < 300:
+        return hit[1]
+    value = False
+    try:
+        text = home_ops(a, [{"op": "read", "path": ".hermes/cron/jobs.json"}])[0].get("text") or ""
+        data = json.loads(text) if text.strip() else []
+        jobs = data.get("jobs", []) if isinstance(data, dict) else data
+        value = any(isinstance(j, dict) and j.get("enabled", True) and not j.get("paused_at")
+                    and j.get("state") not in ("paused", "completed", "error") for j in jobs)
+    except Exception:
+        value = False
+    _jobs_seen[a["slug"]] = (now, value)
+    return value
+
+
 def resume_signed_in() -> None:
     """After a restart, bring back the workspace of everyone whose browser is still signed in,
     so an open tab works again on reload without a trip to the portal."""
     with _lock:
         emps = {v["emp"] for v in _sessions.values() if v["confirmed"]}
-        agents = [_state["agents"][e] for e in emps if e in _state["agents"]]
+        everyone = list(_state["agents"].values())
+    with_jobs = {a["employee_number"] for a in everyone if has_scheduled_jobs(a)}
+    with _lock:
+        agents = [_state["agents"][e] for e in emps | with_jobs if e in _state["agents"]]
     for a in agents:
         try:
             ensure_agent({"employee_number": a["employee_number"], "name": a.get("name"), "username": a.get("username"), "role": a.get("role")})
-            log(f"{a['slug']}: restarted for a browser that was signed in")
+            log(f"{a['slug']}: restarted after the deploy "
+                f"({'has scheduled jobs' if a['employee_number'] in with_jobs else 'a browser was signed in'})")
         except Exception as exc:
             log(f"{a.get('slug')}: could not restart after the deploy: {exc}")
 
