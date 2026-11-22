@@ -1413,6 +1413,7 @@ def _read_page(name: str) -> str:
 
 CONNECT_PAGE = _read_page("connect.html")
 CONNECT_PAGE_CODEX = _read_page("connect-codex.html")
+CONNECTIONS_PAGE = _read_page("connections.html")
 
 START_JS = """
 const OWNER=%(owner)s;
@@ -1542,25 +1543,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/_eca/connections":
             if not s["confirmed"]:
                 return self._send(302, headers={"Location": "/_eca/start"})
-            svc = service_name(a)
-            on = claude_signed_in(a)
-            portal = html.escape(f"{PORTAL_URL}/portal/agent")
-            ai = (f"<p><b>{svc}</b> (your AI plan): <span class=who>connected</span>. "
-                  "Remove it any time with Disconnect AI in the top bar.</p>" if on else
-                  f"<p><b>{svc}</b> (your AI plan): not connected.</p>"
-                  "<a class=btn href=/_eca/connect>Connect it</a>")
-            return self._page(200,
-                "<h1>Connections</h1>"
-                "<p>What your agent can reach. Each one is yours alone and can be removed at any time.</p>"
-                + ai +
-                "<p><b>ECA data</b> (dashboards, Stats, schedule, classes, sales, members, pay): "
-                "<span class=who>connected</span>. It shows only what your portal shows you.</p>"
-                "<p><b>Google Workspace</b> (Gmail read and drafts, Calendar, Drive): connect or remove it "
-                "on the portal's My agent page. Your agent drafts email; it never sends.</p>"
-                f'<a class=btn href="{portal}" rel="noreferrer">Manage Google in the portal</a>'
-                "<p><small>More connections are added by ECA after a security check, so nothing you "
-                "connect can leak club or member data.</small></p>"
-                '<p><a href="/_eca/open">Back to my agent</a></p>')
+            doc = CONNECTIONS_PAGE.replace("__SVC__", service_name(a)) \
+                .replace("__AI__", "1" if claude_signed_in(a) else "0") \
+                .replace("__PORTAL__", html.escape(f"{PORTAL_URL}/portal/agent"))
+            csp = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; "
+                   "frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+            return self._send(200, doc.encode(), "text/html; charset=utf-8", {"Content-Security-Policy": csp})
         if path == "/_eca/whoami":
             if not s["confirmed"]:
                 return self._send(401)
