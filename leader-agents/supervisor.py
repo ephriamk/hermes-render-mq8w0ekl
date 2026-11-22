@@ -90,7 +90,7 @@ CODEX_EMPLOYEES = {e.strip() for e in os.environ.get("ECA_CODEX_EMPLOYEES", "").
 # Codex with a ChatGPT account", 2026-11-19); this is Codex's own default.
 CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-6.2-sol")
 CODEX_ECA_APPROVAL = 'default_tools_approval_mode = "approve"'
-CODEX_NO_INNER_SANDBOX = (("sandbox_mode", "danger-full-access"), ("approval_policy", "on-request"))
+CODEX_PERMISSIONS = 'default_permissions = ":danger-full-access"'
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
@@ -928,32 +928,17 @@ def _codex_setup(a: dict) -> None:
     # Codex's own command sandbox (bubblewrap) cannot start on this host ("bwrap: Failed to make /
     # slave"), which left the ChatGPT engine with no terminal and so no scheduling (found 11-21).
     # The leader's own Linux account is the boundary here, exactly as on the Claude engine, so
-    # Codex runs commands without its inner sandbox. These top-level keys sit above Hermes' marked
-    # block; Codex's docs: when sandbox_mode is set it is used instead of default_permissions.
-    head = "".join(f'{k} = "{v}"\n' for k, v in CODEX_NO_INNER_SANDBOX
-                   if not re.search(rf"(?m)^{k}\s*=", fixed))      # never a duplicate key: Codex refuses the file
-    if head:
-        fixed = "# ECA: the Linux account is the sandbox on this server\n" + head + "\n" + fixed
+    # Codex runs commands without its inner sandbox. Probed on Codex 0.169.1: the built-in profile
+    # is ":danger-full-access" (":danger-no-sandbox" is refused), and a top-level sandbox_mode
+    # does not override the profile. The line sits in Hermes' marked block, which every migrate
+    # rewrites, so it is re-applied here each start, like the token above.
+    fixed = re.sub(r'(?m)^default_permissions\s*=.*$', CODEX_PERMISSIONS, fixed)
+    fixed = re.sub(r'(?m)^(# ECA: the Linux account is the sandbox on this server|sandbox_mode\s*=.*)\n', "", fixed)
     if fixed != toml:
         res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600, "content": fixed}])
         if not res[0].get("ok"):
             raise RuntimeError("could not write the ChatGPT settings")
-    if os.environ.get("ECA_CODEX_PROBE") == "1":
-        # Temporary: which no-sandbox setting does this Codex accept? Key names only, never values.
-        try:
-            tops = [ln.split("=", 1)[0].strip() for ln in fixed.split("\n[", 1)[0].splitlines()
-                    if "=" in ln and not ln.lstrip().startswith("#")]
-            log(f"{a['slug']}: codex probe: top-level keys {tops}; managed default_permissions "
-                f"{re.findall(r'(?m)^default_permissions.*$', fixed)}")
-            for args in (["-c", 'default_permissions=":danger-no-sandbox"', "login", "status"],
-                         ["-c", 'default_permissions=":danger-full-access"', "login", "status"],
-                         ["-c", 'default_permissions=":nonsense-profile"', "login", "status"],
-                         ["sandbox", "--help"], ["--version"]):
-                r = run_as(a, [CODEX] + args, timeout=40)
-                out = ((r.stdout or "") + " | " + (r.stderr or "")).replace("\n", " / ")[:420]
-                log(f"{a['slug']}: codex probe {args[:2]}: rc={r.returncode} {out}")
-        except Exception as exc:
-            log(f"{a['slug']}: codex probe failed: {exc}")
+
 
 
 # ───────────────────────────── processes ─────────────────────────────
