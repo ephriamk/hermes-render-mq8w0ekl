@@ -120,7 +120,9 @@
     }
     pal.style.display = "";
     var loading = document.querySelector('[data-slot="aui_response-loading"]');
-    var streaming = document.querySelector('[data-slot="aui_message-streaming-marker"]');
+    // An answer is arriving while its text block is not yet marked complete. (The engine's
+    // "streaming marker" element is no use: it stays in every finished message.)
+    var streaming = document.querySelector('[data-slot="aui_assistant-message-content"] [data-status]:not([data-status="complete"])');
     var msgs = document.querySelectorAll('[data-slot="aui_assistant-message-content"]');
     var lastMsg = msgs.length ? msgs[msgs.length - 1] : null;
     if (loading) {
