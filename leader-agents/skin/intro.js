@@ -6,6 +6,13 @@
 (function () {
   "use strict";
   try { if (sessionStorage.getItem("eca.intro") === "1") return; } catch (e) {}
+  // A tab with no key for the workspace yet is about to be sent away for one (skin.js, first
+  // lines, same test). Playing on that load would be cut off after a blink and would mark the
+  // opening as seen (found 11-22), so wait for the load that stays.
+  try {
+    var KEY = "hermes.webapp.session.v1:" + JSON.stringify([location.origin, ""]);
+    if (!sessionStorage.getItem(KEY) && Number(sessionStorage.getItem("eca.opentries") || 0) < 2) return;
+  } catch (e) {}
   try { if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (e) {}
   var cv = document.createElement("canvas");
   var gl = null;
