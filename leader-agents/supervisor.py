@@ -90,6 +90,7 @@ CODEX_EMPLOYEES = {e.strip() for e in os.environ.get("ECA_CODEX_EMPLOYEES", "").
 # Codex with a ChatGPT account", 2026-11-19); this is Codex's own default.
 CODEX_MODEL = os.environ.get("ECA_CODEX_MODEL", "gpt-6.2-sol")
 CODEX_ECA_APPROVAL = 'default_tools_approval_mode = "approve"'
+CODEX_NO_INNER_SANDBOX = (("sandbox_mode", "danger-full-access"), ("approval_policy", "on-request"))
 AGENT_PATH = "/usr/local/bin:/opt/hermes/bin:/opt/hermes/.venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 COOKIE = "__Host-eca-agent"
 SESSION_HOURS = 12
@@ -308,6 +309,12 @@ group of four fitness clubs: Everett (06902), Wallingford (06904), Columbia
 
 You are a full working agent: you can research, write, run code in this
 workspace, build reports and files, and schedule recurring work.
+
+You are "the ECA Agent". In what you write to {name}, never name the software
+you run on (Hermes, Codex, Claude Code or any other program or vendor): say
+"I", "my skills", "my scheduler", "my terminal". Commands may use their real
+names; your sentences may not. Only if {name} asks directly what you run on,
+answer briefly and plainly.
 
 ## ECA data
 
@@ -918,6 +925,15 @@ def _codex_setup(a: dict) -> None:
     # (Codex otherwise wants a click per lookup). Only the eca server; anything else still asks.
     if "[mcp_servers.eca]" in fixed and CODEX_ECA_APPROVAL not in fixed:
         fixed = fixed.replace("[mcp_servers.eca]\n", "[mcp_servers.eca]\n" + CODEX_ECA_APPROVAL + "\n", 1)
+    # Codex's own command sandbox (bubblewrap) cannot start on this host ("bwrap: Failed to make /
+    # slave"), which left the ChatGPT engine with no terminal and so no scheduling (found 11-21).
+    # The leader's own Linux account is the boundary here, exactly as on the Claude engine, so
+    # Codex runs commands without its inner sandbox. These top-level keys sit above Hermes' marked
+    # block; Codex's docs: when sandbox_mode is set it is used instead of default_permissions.
+    head = "".join(f'{k} = "{v}"\n' for k, v in CODEX_NO_INNER_SANDBOX
+                   if not re.search(rf"(?m)^{k}\s*=", fixed))      # never a duplicate key: Codex refuses the file
+    if head:
+        fixed = "# ECA: the Linux account is the sandbox on this server\n" + head + "\n" + fixed
     if fixed != toml:
         res = home_ops(a, [{"op": "write", "path": ".codex/config.toml", "mode": 0o600, "content": fixed}])
         if not res[0].get("ok"):
