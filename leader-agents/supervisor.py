@@ -121,6 +121,42 @@ def _h(value: str) -> str:
 
 # ───────────────────────────── state on disk ─────────────────────────────
 
+SESSIONS_FILE = STATE_FILE.parent / "sessions.json"
+
+
+def save_sessions() -> None:
+    """Browser sign-ins survive a restart (a deploy no longer signs everyone out). Only the
+    hash of each cookie is kept, in the root-only state folder, so the file opens nothing."""
+    try:
+        with _lock:
+            now = time.time()
+            body = json.dumps({k: v for k, v in _sessions.items() if v["expires"] > now})
+        SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SESSIONS_FILE.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(body)
+        os.replace(tmp, SESSIONS_FILE)
+    except Exception as exc:
+        log(f"could not save sign-ins: {exc}")
+
+
+def load_sessions() -> None:
+    try:
+        data = json.loads(SESSIONS_FILE.read_text())
+    except Exception:
+        return
+    now = time.time()
+    with _lock:
+        for k, v in (data.items() if isinstance(data, dict) else []):
+            if (isinstance(v, dict) and isinstance(v.get("emp"), str)
+                    and isinstance(v.get("expires"), (int, float)) and v["expires"] > now
+                    and v["emp"] in _state["agents"]):
+                _sessions[k] = {"emp": v["emp"], "expires": float(v["expires"]),
+                                "confirmed": bool(v.get("confirmed"))}
+    if _sessions:
+        log(f"{len(_sessions)} browser sign-in(s) kept across the restart")
+
 def load_state() -> None:
     global _state
     for candidate in (STATE_FILE, STATE_FILE.with_suffix(".bak")):
@@ -1598,6 +1634,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if origin != f"https://{self.headers.get('Host', '')}":
                 return self._send(403, b"refused")
             s["confirmed"] = True
+            save_sessions()
             return self._send(303, headers={"Location": "/_eca/start"})
         if path in ("/_eca/connect/start", "/_eca/connect/input"):
             a = self._agent(s)
@@ -1642,6 +1679,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 for k in [k for k, v in _sessions.items() if v is s]:
                     _sessions.pop(k, None)
+            save_sessions()
             if a is not None:
                 # Also end every browser tab's hold on the workspace itself, so a copy left in
                 # another tab or on a shared computer stops working.
@@ -1728,6 +1766,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     # (GET), from anywhere, asks first and names the person, so nobody can
                                     # be dropped into someone else's workspace by a link.
                                     "confirmed": confirmed}
+        save_sessions()
         log(f"{a['slug']}: signed in from the portal")
         headers = {"Location": "/_eca/start",
                    "Set-Cookie": f"{COOKIE}={value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={SESSION_HOURS * 3600}"}
@@ -1791,9 +1830,24 @@ def prepare_dirs() -> None:
     os.chmod(STATE_FILE.parent, 0o700)
 
 
+def resume_signed_in() -> None:
+    """After a restart, bring back the workspace of everyone whose browser is still signed in,
+    so an open tab works again on reload without a trip to the portal."""
+    with _lock:
+        emps = {v["emp"] for v in _sessions.values() if v["confirmed"]}
+        agents = [_state["agents"][e] for e in emps if e in _state["agents"]]
+    for a in agents:
+        try:
+            ensure_agent({"employee_number": a["employee_number"], "name": a.get("name"), "username": a.get("username"), "role": a.get("role")})
+            log(f"{a['slug']}: restarted for a browser that was signed in")
+        except Exception as exc:
+            log(f"{a.get('slug')}: could not restart after the deploy: {exc}")
+
+
 def main() -> None:
     prepare_dirs()
     load_state()
+    load_sessions()
     with _lock:
         for a in _state["agents"].values():
             try:
@@ -1805,6 +1859,7 @@ def main() -> None:
     threading.Thread(target=keeper, daemon=True).start()
     threading.Thread(target=limits, daemon=True).start()
     threading.Thread(target=prepare_known_homes, daemon=True).start()
+    threading.Thread(target=resume_signed_in, daemon=True).start()
     log(f"listening; backend {BACKEND}; {len(_state['agents'])} known workspaces; "
         f"image {_image_label(IMAGE_ID) if IMAGE_ID else 'unrecorded'}; data in {DATA}"
         f"{' (on its own disk)' if os.path.ismount(DATA) else ' (NOT on a disk: lost at restart)'}")
