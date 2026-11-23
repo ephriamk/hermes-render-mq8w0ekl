@@ -462,6 +462,20 @@ you are, say you are one of {name}'s ECA bots.
 """
 
 
+BOT_LOOKS = ".hermes/.eca-bot-looks.json"
+BOT_CUTS = ("emerald", "round", "square", "kite", "crystal", "shield")
+
+
+def read_bot_looks(a: dict) -> dict:
+    """{bot name: {"c": colour number or None, "k": cut or None}}; empty when unset or unreadable."""
+    try:
+        data = json.loads(home_ops(a, [{"op": "read", "path": BOT_LOOKS}])[0].get("text") or "{}")
+        return {str(k)[:64]: {"c": v.get("c"), "k": v.get("k")} for k, v in data.items()
+                if isinstance(v, dict)} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def house_rules(soul_text: str, a: dict) -> str:
     """The rules every bot gets: the standing brief from its ECA data section on."""
     at = soul_text.find("## ECA data")
@@ -1722,6 +1736,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # "claude_signed_in" is the sign-in to whichever AI service this leader uses.
             return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a),
                                     "service": service_name(a)})
+        if path == "/_eca/bot-looks":
+            # The stone (colour and cut) the person picked for each bot. Kept in their own home.
+            if not s["confirmed"]:
+                return self._send(401)
+            return self._json(200, {"looks": read_bot_looks(a)})
         if path == "/_eca/connect":
             if not s["confirmed"]:
                 return self._send(302, headers={"Location": "/_eca/start"})
@@ -1805,6 +1824,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, {"disconnected": True, "service": service_name(a),
                                     "revoke_note": ("Also remove the sign-in on claude.ai: Settings, Claude Code."
                                                     if engine(a) != "codex" else "")})
+        if path == "/_eca/bot-looks":
+            a = self._agent(s)
+            origin = self.headers.get("Origin") or ""
+            if a is None or not s["confirmed"] or origin != f"https://{self.headers.get('Host', '')}":
+                return self._send(403, b"refused")
+            try:
+                body = json.loads(raw.decode("utf-8"))
+                name = str(body.get("name") or "").strip().lower()
+                colour, cut = body.get("c"), body.get("k")
+                if not re.fullmatch(r"[a-z0-9][a-z0-9 _.\-]{0,63}", name):
+                    raise ValueError
+                if colour is not None and not (isinstance(colour, int) and 0 <= colour < 12):
+                    raise ValueError
+                if cut is not None and cut not in BOT_CUTS:
+                    raise ValueError
+            except Exception:
+                return self._send(400, b"bad request")
+            looks = read_bot_looks(a)
+            if colour is None and cut is None:
+                looks.pop(name, None)
+            elif name in looks or len(looks) < 200:
+                looks[name] = {"c": colour, "k": cut}
+            res = home_ops(a, [{"op": "write", "path": BOT_LOOKS, "mode": 0o600,
+                                "content": json.dumps(looks, sort_keys=True)}])
+            if not res[0].get("ok"):
+                return self._send(500, b"could not save")
+            return self._json(200, {"looks": looks})
         if path == "/_eca/sign-out":
             a = self._agent(s)
             with _lock:

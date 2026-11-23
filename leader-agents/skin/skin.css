@@ -380,3 +380,16 @@ li[data-slot="sidebar-menu-item"].eca-new i.codicon::before { content: "\ea60" !
    sits in its place. ── */
 svg[data-bot-face].eca-face-off { display: none !important; }
 canvas.eca-bot-gem { display: block; flex: none; }
+
+/* ── P14. The stone picker in the New bot / Edit bot window ── */
+#eca-gem-pick { display: grid; gap: 8px; justify-items: center; margin: 8px 0 4px; }
+#eca-gem-pick .eca-pick-row { display: flex; align-items: center; gap: 8px; }
+#eca-gem-pick .eca-pick-label { width: 44px; font-size: 11px; color: var(--eca-text-3); text-align: right; }
+#eca-gem-pick button { cursor: pointer; border: 1px solid transparent; padding: 0; background: none; color: var(--eca-text-2); }
+#eca-gem-pick .eca-pick-auto { font-size: 11px; padding: 3px 9px; border-radius: 999px; border-color: var(--eca-border-strong); }
+#eca-gem-pick .eca-pick-sw { width: 22px; height: 22px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35); }
+#eca-gem-pick .eca-pick-cut { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; }
+#eca-gem-pick .eca-pick-cut canvas { width: 30px; height: 30px; display: block; pointer-events: none; }
+#eca-gem-pick button:hover { border-color: rgba(167, 243, 208, .45); }
+#eca-gem-pick button.eca-on { border-color: #34d399; box-shadow: 0 0 0 2px rgba(16, 185, 129, .28); color: #d1fae5; }
+#eca-gem-pick .eca-pick-auto.eca-on { background: rgba(16, 185, 129, .16); }

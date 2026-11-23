@@ -258,12 +258,89 @@
     "saturate(.08) brightness(1.35)"                       // diamond
   ];
   var GEM_CUTS = ["round", "square", "kite", "crystal", "shield"];
-  function gemLook(name) {
+  var GEM_NAMES = ["Ruby", "Fire", "Gold", "Sapphire", "Amethyst", "Diamond"];
+  var GEM_SWATCH = ["#ff5fa8", "#ff7a3d", "#ffc531", "#3fa9ff", "#9a7bff", "#e8eef0"];
+  // What the person picked (kept in their workspace, so it follows them to any browser), and the
+  // pick being made in an open New bot window before the bot exists.
+  var LOOKS = {}, PENDING = null;
+  function loadLooks() {
+    fetch("/_eca/bot-looks", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.looks) { LOOKS = d.looks; later(); } })
+      .catch(function () {});
+  }
+  function saveLook(name, pick) {
     name = String(name || "").toLowerCase();
-    if (!name || name === "default" || name === "hermes" || name === "eca agent") return { filter: "", cut: "emerald" };
+    if (!name) return;
+    if (pick.c == null && pick.k == null) delete LOOKS[name]; else LOOKS[name] = { c: pick.c, k: pick.k };
+    fetch("/_eca/bot-looks", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, c: pick.c == null ? null : pick.c, k: pick.k || null }) }).catch(function () {});
+  }
+  function gemLook(name, pick) {
+    name = String(name || "").toLowerCase();
+    pick = pick || LOOKS[name] || {};
+    var main = !name || name === "default" || name === "hermes" || name === "eca agent";
     var h = 0, g = 7;
     for (var i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) >>> 0; g = (g * 131 + name.charCodeAt(i) * 7 + 3) >>> 0; }
-    return { filter: GEM_COLOURS[h % GEM_COLOURS.length], cut: GEM_CUTS[g % GEM_CUTS.length] };
+    var c = pick.c != null && GEM_COLOURS[pick.c] ? pick.c : (main ? -1 : h % GEM_COLOURS.length);
+    var k = pick.k || (main ? "emerald" : GEM_CUTS[g % GEM_CUTS.length]);
+    return { filter: c < 0 ? "" : GEM_COLOURS[c], cut: k, c: c, k: k };
+  }
+  // The picker in the New bot / Edit bot window: a row of colours and a row of cuts, each with
+  // "Auto" (let the name decide). In the New bot window the pick is saved when the bot is created.
+  function pickerFor(dialog, gem, name, isNew) {
+    var box = dialog.querySelector("#eca-gem-pick");
+    var pick = isNew ? (PENDING || (PENDING = { c: null, k: null })) : (LOOKS[String(name).toLowerCase()] || { c: null, k: null });
+    if (!box) {
+      var anchor = null, notes = dialog.querySelectorAll("div,p,span");
+      for (var n = 0; n < notes.length; n++) {
+        if (!notes[n].children.length && /^(Face follows the name\.?|Pick a stone.*)$/i.test((notes[n].textContent || "").trim())) { anchor = notes[n]; break; }
+      }
+      if (!anchor) return;
+      anchor.textContent = "Pick a stone, or leave both on Auto and the name decides.";
+      box = el("div", { id: "eca-gem-pick" });
+      var rowC = el("div", { "class": "eca-pick-row", "data-kind": "c" }), rowK = el("div", { "class": "eca-pick-row", "data-kind": "k" });
+      rowC.appendChild(el("span", { "class": "eca-pick-label" }, "Colour"));
+      rowK.appendChild(el("span", { "class": "eca-pick-label" }, "Cut"));
+      rowC.appendChild(el("button", { type: "button", "class": "eca-pick-auto", "data-v": "" }, "Auto"));
+      rowK.appendChild(el("button", { type: "button", "class": "eca-pick-auto", "data-v": "" }, "Auto"));
+      for (var c = 0; c < GEM_COLOURS.length; c++) {
+        var sw = el("button", { type: "button", "class": "eca-pick-sw", "data-v": String(c), title: GEM_NAMES[c], "aria-label": GEM_NAMES[c] });
+        sw.style.background = "radial-gradient(circle at 35% 30%, #fff8, transparent 45%), " + GEM_SWATCH[c];
+        rowC.appendChild(sw);
+      }
+      for (var k = 0; k < GEM_CUTS.length; k++) {
+        var cb = el("button", { type: "button", "class": "eca-pick-cut", "data-v": GEM_CUTS[k], title: GEM_CUTS[k], "aria-label": GEM_CUTS[k] + " cut" });
+        var cc = el("canvas", { "aria-hidden": "true" });
+        cb.appendChild(cc); rowK.appendChild(cb);
+      }
+      box.appendChild(rowC); box.appendChild(rowK);
+      anchor.parentNode.insertBefore(box, anchor.nextSibling);
+      var cvs = box.querySelectorAll(".eca-pick-cut canvas");
+      for (var q = 0; q < cvs.length; q++) gem.attach(cvs[q], { mode: "calm", face: true, cut: cvs[q].parentNode.getAttribute("data-v") });
+      box.addEventListener("click", function (ev) {
+        var btn = ev.target.closest ? ev.target.closest("button[data-v]") : null;
+        if (!btn) return;
+        ev.preventDefault(); ev.stopPropagation();
+        var kind = btn.parentNode.getAttribute("data-kind"), v = btn.getAttribute("data-v");
+        var fresh = box.__isNew ? PENDING : { c: (LOOKS[box.__name] || {}).c, k: (LOOKS[box.__name] || {}).k };
+        if (fresh.c === undefined) fresh.c = null;
+        if (fresh.k === undefined) fresh.k = null;
+        if (kind === "c") fresh.c = v === "" ? null : Number(v); else fresh.k = v || null;
+        if (!box.__isNew) saveLook(box.__name, fresh);
+        later();
+      });
+    }
+    box.__isNew = isNew; box.__name = String(name || "").toLowerCase();
+    var shown = gemLook(name, pick);
+    var all = box.querySelectorAll("button[data-v]");
+    for (var i = 0; i < all.length; i++) {
+      var kind = all[i].parentNode.getAttribute("data-kind"), v = all[i].getAttribute("data-v");
+      var on = kind === "c" ? (v === "" ? pick.c == null : pick.c === Number(v)) : (v === "" ? !pick.k : pick.k === v);
+      if (all[i].classList.contains("eca-on") !== on) all[i].classList.toggle("eca-on", on);
+      var pcv = all[i].querySelector("canvas");
+      if (pcv && pcv.style.filter !== shown.filter) pcv.style.filter = shown.filter;       // the cuts are shown in the chosen colour
+    }
   }
   var FACE_PICKER = /^(round|organic|boxy|capsule|nub|cloud|droplet|hexagon|sun|triangle|Auto\b.*)$/i;
   function botGems() {
@@ -282,9 +359,11 @@
         if (!gem.attach(cv, { mode: "calm", face: size >= 26 })) { cv.remove(); continue; }
         svg.classList.add("eca-face-off");
       }
-      if (cv.getAttribute("data-for") !== name) {
-        cv.setAttribute("data-for", name);
-        var look = gemLook(name);
+      var inDialog = svg.closest('[role="dialog"]');
+      var look = gemLook(name, inDialog && inDialog.querySelector('#eca-gem-pick') && inDialog.querySelector('#eca-gem-pick').__isNew ? PENDING : null);
+      var sig = name + "|" + look.c + "|" + look.k;
+      if (cv.getAttribute("data-for") !== sig) {
+        cv.setAttribute("data-for", sig);
         cv.style.filter = look.filter;
         gem.cut(cv, look.cut);
       }
@@ -295,21 +374,25 @@
       var nx = stray[j].nextElementSibling;
       if (!nx || !nx.hasAttribute || !nx.hasAttribute("data-bot-face")) stray[j].remove();
     }
-    // The New bot window: the stone's colour comes from the name, so the engine's face shapes,
-    // "Randomize" and "Lock face" have nothing to choose.
-    var dialogs = document.querySelectorAll('[role="dialog"]');
+    // The New bot / Edit bot window: the engine's face shapes, "Randomize" and "Lock face" give
+    // way to ECA's stone picker.
+    var dialogs = document.querySelectorAll('[role="dialog"]'), anyNew = false;
     for (var d = 0; d < dialogs.length; d++) {
-      if (!/\b(New|Edit) bot\b|bot profile/i.test((dialogs[d].querySelector("h1,h2,h3,[role=heading]") || {}).textContent || "")) continue;
-      var btns = dialogs[d].querySelectorAll("button");
+      var dg = dialogs[d], btns = dg.querySelectorAll("button"), isBot = !!dg.querySelector("#eca-gem-pick"), isNew = false;
       for (var b = 0; b < btns.length; b++) {
+        if (btns[b].closest("#eca-gem-pick")) continue;
         var t = (btns[b].getAttribute("aria-label") || btns[b].textContent || "").trim();
-        if (FACE_PICKER.test(t) || /^(Randomize|Lock face|Unlock face|Classic shapes|Blob faces)$/i.test(t)) btns[b].setAttribute("data-eca-hide", "");
+        if (FACE_PICKER.test(t) || /^(Randomize|Lock face|Unlock face|Classic shapes|Blob faces)$/i.test(t)) { btns[b].setAttribute("data-eca-hide", ""); isBot = true; }
+        if (/^Create bot$/i.test(t)) isNew = true;
       }
-      var notes = dialogs[d].querySelectorAll("div,p,span");
-      for (var n = 0; n < notes.length; n++) {
-        if (!notes[n].children.length && /^Face follows the name\.?$/i.test((notes[n].textContent || "").trim())) notes[n].textContent = "Each bot is a stone with its own colour and cut, set by its name.";
-      }
+      if (!isBot) continue;
+      var face = null, fs = dg.querySelectorAll("svg[data-bot-face]");
+      for (var f = 0; f < fs.length; f++) { if (!fs[f].closest("button")) { face = fs[f]; break; } }
+      if (!face) continue;
+      if (isNew) anyNew = true;
+      pickerFor(dg, gem, face.getAttribute("data-bot-face") || "", isNew);
     }
+    if (!anyNew) PENDING = null;
   }
   function sideMark() {
     if (document.getElementById("eca-side-mark")) return;
@@ -343,6 +426,14 @@
   try { new MutationObserver(later).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); } catch (e) {}
   window.addEventListener("hashchange", later);
   // The engine's own "sign in" prompts lead to ECA's Connect page instead of its set-up screens.
+  document.addEventListener("click", function (ev) {
+    // "Create bot": keep the stone picked in that window under the bot's name.
+    var cb = ev.target && ev.target.closest ? ev.target.closest("button") : null;
+    if (cb && PENDING && (PENDING.c != null || PENDING.k) && /^Create bot$/i.test((cb.textContent || "").trim())) {
+      var dlg = cb.closest('[role="dialog"]'), pv = dlg && dlg.querySelector("canvas.eca-bot-gem + svg[data-bot-face]");
+      if (pv) saveLook(pv.getAttribute("data-bot-face"), { c: PENDING.c, k: PENDING.k });
+    }
+  }, true);
   document.addEventListener("click", function (ev) {
     var btn = ev.target && ev.target.closest ? ev.target.closest("button") : null;
     if (btn && btn.closest('[data-slot="aui_error-card"]') && /^Sign in to (Claude|ChatGPT|OpenAI)/.test((btn.textContent || "").trim())) {
@@ -457,6 +548,6 @@
       })
       .catch(function () {});
   }
-  function start() { brand(); check(); }
+  function start() { brand(); check(); loadLooks(); }
   if (document.body) start(); else document.addEventListener("DOMContentLoaded", start);
 })();
