@@ -247,13 +247,23 @@
   // svg[data-bot-face="<bot name>"]; that drawing is hidden and a stone sits in its place, its
   // colour decided by the bot's name (same name, same colour, on every screen). The main agent
   // keeps the emerald green. Uploaded pictures are not touched.
-  var GEM_HUES = [70, 125, 200, 250, 35, 170, 100, 225];     // sapphire, amethyst, ruby, topaz, aqua, rose, indigo, garnet
-  function gemHue(name) {
+  // Six colours that cannot be mistaken for each other or for the main agent's green, and five
+  // cuts: thirty looks. The colour and the cut are picked separately from the name.
+  var GEM_COLOURS = [
+    "hue-rotate(215deg) saturate(1.5)",                    // pink ruby
+    "hue-rotate(255deg) saturate(1.7) brightness(1.1)",    // fire orange
+    "hue-rotate(285deg) saturate(1.6) brightness(1.25)",   // gold
+    "hue-rotate(85deg) saturate(1.5)",                     // sapphire
+    "hue-rotate(135deg) saturate(1.3)",                    // amethyst
+    "saturate(.08) brightness(1.35)"                       // diamond
+  ];
+  var GEM_CUTS = ["round", "square", "kite", "crystal", "shield"];
+  function gemLook(name) {
     name = String(name || "").toLowerCase();
-    if (!name || name === "default" || name === "hermes" || name === "eca agent") return 0;
-    var h = 0;
-    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    return GEM_HUES[h % GEM_HUES.length];
+    if (!name || name === "default" || name === "hermes" || name === "eca agent") return { filter: "", cut: "emerald" };
+    var h = 0, g = 7;
+    for (var i = 0; i < name.length; i++) { h = (h * 31 + name.charCodeAt(i)) >>> 0; g = (g * 131 + name.charCodeAt(i) * 7 + 3) >>> 0; }
+    return { filter: GEM_COLOURS[h % GEM_COLOURS.length], cut: GEM_CUTS[g % GEM_CUTS.length] };
   }
   var FACE_PICKER = /^(round|organic|boxy|capsule|nub|cloud|droplet|hexagon|sun|triangle|Auto\b.*)$/i;
   function botGems() {
@@ -274,8 +284,9 @@
       }
       if (cv.getAttribute("data-for") !== name) {
         cv.setAttribute("data-for", name);
-        var hue = gemHue(name);
-        cv.style.filter = hue ? "hue-rotate(" + hue + "deg) saturate(1.15)" : "";
+        var look = gemLook(name);
+        cv.style.filter = look.filter;
+        gem.cut(cv, look.cut);
       }
     }
     // a stone whose drawing the engine has since removed
@@ -296,7 +307,7 @@
       }
       var notes = dialogs[d].querySelectorAll("div,p,span");
       for (var n = 0; n < notes.length; n++) {
-        if (!notes[n].children.length && /^Face follows the name\.?$/i.test((notes[n].textContent || "").trim())) notes[n].textContent = "Each bot is a stone of its own colour, set by its name.";
+        if (!notes[n].children.length && /^Face follows the name\.?$/i.test((notes[n].textContent || "").trim())) notes[n].textContent = "Each bot is a stone with its own colour and cut, set by its name.";
       }
     }
   }

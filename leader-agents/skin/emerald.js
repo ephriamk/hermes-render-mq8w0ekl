@@ -4,6 +4,8 @@
    window.ECAEmerald.attach(canvas, { mode, face })   draw the character into a square <canvas>
        mode "idle" (default) follows the shared mood; mode "thinking" is always thinking;
        mode "calm" always rests (bot faces in a list)
+       cut "emerald" (default) | "round" | "square" | "kite" | "crystal" | "shield": the stone's shape
+   window.ECAEmerald.cut(canvas, name)   change an attached stone's shape
        face false gives the plain turning stone (default: a face at 40 px and up)
    window.ECAEmerald.mouth(level)    open the mouth 0..1 right now; call it many times a second with
                                      the loudness of a voice and the mouth follows it (voice mode)
@@ -118,6 +120,17 @@ void main(){
   var eng = null, gl = null, U = {}, items = [], looks = {}, raf = 0, last = 0;
   var mood = "idle", pulse = 0, tX = 0, tY = 0, clock = 0, dead = false;
   var mouthVal = 0, talkUntil = 0, active = Date.now(), SLEEP_AFTER = 180000;
+  // The cuts. Eight side directions, 45 degrees apart, seen from above with the face on: 0 is
+  // right, 2 is up. Each number is how far that side sits from the middle (9 = no side there).
+  var CUTS = {
+    emerald: [1.0, .9, .7, .9, 1.0, .9, .7, .9],          // the wide step cut: the main agent
+    round:   [.84, .84, .84, .84, .84, .84, .84, .84],
+    square:  [.80, 1.0, .80, 1.0, .80, 1.0, .80, 1.0],
+    kite:    [1.04, .72, .96, .72, 1.04, .72, .96, .72],   // a square stood on its point
+    crystal: [.80, .80, 9, .80, .80, .80, 9, .80],          // six sides, pointed top and bottom
+    shield:  [.86, .92, .78, .92, .86, .70, 9, .70]         // flat top, pointed bottom
+  };
+  var PLANES = {}, UP = null;
 
   function build() {
     if (eng || dead) return !dead;
@@ -132,14 +145,17 @@ void main(){
       var buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
       gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
       var loc = gl.getAttribLocation(pr, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      (function(){var P=[],rad=[1.0,.9,.7,.9,1.0,.9,.7,.9],D=Math.PI/180;
-       function tier(e,rf,h){for(var k=0;k<8;k++){var a=k*45*D,ce=Math.cos(e*D),se=Math.sin(e*D),n=[Math.cos(a)*ce,se,Math.sin(a)*ce],r=rad[k]*rf;P.push(n[0],n[1],n[2],r*ce+h*se)}}
-       P.push(0,1,0,.40);          // table
-       tier(34,1.0,.07);tier(60,.74,.27);
-       tier(0,1.0,0);              // girdle
-       tier(-38,1.0,-.07);tier(-57,.62,-.42);
-       P.push(0,-1,0,.82);         // culet
-       gl.uniform4fv(gl.getUniformLocation(pr,"P"),new Float32Array(P))})();
+      UP = gl.getUniformLocation(pr, "P");
+      Object.keys(CUTS).forEach(function (name) {
+        var P = [], rad = CUTS[name], D = Math.PI / 180;
+        function tier(e, rf, h) { for (var k = 0; k < 8; k++) { var a = k * 45 * D, ce = Math.cos(e * D), se = Math.sin(e * D), r = rad[k] * rf; P.push(Math.cos(a) * ce, se, Math.sin(a) * ce, r * ce + h * se); } }
+        P.push(0, 1, 0, .40);          // table
+        tier(34, 1.0, .07); tier(60, .74, .27);
+        tier(0, 1.0, 0);               // girdle
+        tier(-38, 1.0, -.07); tier(-57, .62, -.42);
+        P.push(0, -1, 0, .82);         // culet
+        PLANES[name] = new Float32Array(P);
+      });
       ["R", "A", "B", "S", "Y", "F", "L", "O", "MH", "MW", "MO", "MC"].forEach(function (k) { U[k] = gl.getUniformLocation(pr, k); });
       gl.clearColor(0, 0, 0, 0);
       return true;
@@ -150,7 +166,8 @@ void main(){
   function lookFor(key) {
     return looks[key] || (looks[key] = { ang: 0.6, spin: 0.45, open: 1, mh: 0, mw: 0, mo: 0, mc: 4.6, lx: 0, ly: 0, nextBlink: clock + 1.5, blink: 0 });
   }
-  function draw(o, m, face, size, dt) {
+  function draw(o, m, face, size, dt, cut) {
+    gl.uniform4fv(UP, PLANES[cut] || PLANES.emerald);
     var think = m === "thinking", sleep = m === "sleep";
     var breathe = think ? 0.35 + 0.35 * Math.sin(clock * 5.2) : sleep ? 0.04 + 0.04 * Math.sin(clock * 0.8) : 0.10 + 0.08 * Math.sin(clock * 1.4);
     // where it is looking: the pointer, or up and aside while thinking, or nowhere while asleep
@@ -197,13 +214,13 @@ void main(){
       live.forEach(function (it) {
         var m = it.mode === "thinking" ? "thinking" : it.mode === "calm" ? "idle" : dozing ? "sleep" : mood;
         var face = it.face === undefined ? it.cv.clientWidth >= 40 : !!it.face;
-        var key = (face ? "f" : "p") + ":" + m;
-        var g = groups[key] || (groups[key] = { m: m, face: face, want: 0, list: [] });
+        var key = (face ? "f" : "p") + ":" + m + ":" + it.cut;
+        var g = groups[key] || (groups[key] = { m: m, face: face, cut: it.cut, want: 0, list: [] });
         g.want = Math.max(g.want, it.cv.clientWidth * dpr); g.list.push(it);
       });
       Object.keys(groups).forEach(function (key) {
         var g = groups[key], size = Math.max(64, Math.min(640, Math.round(g.want * 1.5)));   // drawn larger, copied down: smooth edges
-        draw(lookFor(key), g.m, g.face, size, dt);
+        draw(lookFor(key), g.m, g.face, size, dt, g.cut);
         g.list.forEach(function (it) {
           var w = Math.round(it.cv.clientWidth * dpr);
           if (it.cv.width !== w) { it.cv.width = w; it.cv.height = w; }
@@ -230,8 +247,11 @@ void main(){
       if (!build()) return false;
       var ctx = cv.getContext("2d"); if (!ctx) return false;
       cv.__ecaGem = true;
-      items.push({ cv: cv, ctx: ctx, mode: (opts && opts.mode) || "idle", face: opts ? opts.face : undefined }); wake(); return true;
+      var it = { cv: cv, ctx: ctx, mode: (opts && opts.mode) || "idle", face: opts ? opts.face : undefined, cut: (opts && CUTS[opts.cut]) ? opts.cut : "emerald" };
+      cv.__ecaItem = it; items.push(it); wake(); return true;
     },
+    cut: function (cv, name) { if (cv && cv.__ecaItem && CUTS[name]) cv.__ecaItem.cut = name; },
+    cuts: function () { return Object.keys(CUTS); },
     mood: function (name) { if (name === undefined) return mood; if (MOODS[name]) mood = name; return mood; },
     mouth: function (v) { mouthVal = Math.max(0, Math.min(1, Number(v) || 0)); active = Date.now(); },
     talk: function (ms) { talkUntil = Math.max(talkUntil, Date.now() + (ms || 400)); active = Date.now(); },
