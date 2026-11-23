@@ -165,6 +165,7 @@
   }
   function strip() {
     relabel();
+    botGems();
     toolLabels();
     thinkingGems();
     companion();
@@ -240,6 +241,63 @@
       var cv = el("canvas", { "class": "eca-gem-think", "aria-hidden": "true" });
       spots[i].insertBefore(cv, spots[i].firstChild);
       if (gem.attach(cv, { mode: "thinking" })) spots[i].classList.add("eca-has-gem"); else cv.remove();
+    }
+  }
+  // Bot faces: every bot is a small stone of its own colour. The engine draws a face as
+  // svg[data-bot-face="<bot name>"]; that drawing is hidden and a stone sits in its place, its
+  // colour decided by the bot's name (same name, same colour, on every screen). The main agent
+  // keeps the emerald green. Uploaded pictures are not touched.
+  var GEM_HUES = [70, 125, 200, 250, 35, 170, 100, 225];     // sapphire, amethyst, ruby, topaz, aqua, rose, indigo, garnet
+  function gemHue(name) {
+    name = String(name || "").toLowerCase();
+    if (!name || name === "default" || name === "hermes" || name === "eca agent") return 0;
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return GEM_HUES[h % GEM_HUES.length];
+  }
+  var FACE_PICKER = /^(round|organic|boxy|capsule|nub|cloud|droplet|hexagon|sun|triangle|Auto\b.*)$/i;
+  function botGems() {
+    var gem = window.ECAEmerald;
+    if (!gem) return;
+    var faces = document.querySelectorAll("svg[data-bot-face]");
+    for (var i = 0; i < faces.length; i++) {
+      var svg = faces[i], name = svg.getAttribute("data-bot-face") || "";
+      var cv = svg.previousElementSibling;
+      if (!cv || !cv.classList || !cv.classList.contains("eca-bot-gem")) {
+        var size = Math.round(svg.getBoundingClientRect().width || Number(svg.getAttribute("width")) || 34);
+        if (size < 12) continue;
+        cv = el("canvas", { "class": "eca-bot-gem", "aria-hidden": "true" });
+        cv.style.width = cv.style.height = size + "px";
+        svg.parentNode.insertBefore(cv, svg);
+        if (!gem.attach(cv, { mode: "calm", face: size >= 26 })) { cv.remove(); continue; }
+        svg.classList.add("eca-face-off");
+      }
+      if (cv.getAttribute("data-for") !== name) {
+        cv.setAttribute("data-for", name);
+        var hue = gemHue(name);
+        cv.style.filter = hue ? "hue-rotate(" + hue + "deg) saturate(1.15)" : "";
+      }
+    }
+    // a stone whose drawing the engine has since removed
+    var stray = document.querySelectorAll("canvas.eca-bot-gem");
+    for (var j = 0; j < stray.length; j++) {
+      var nx = stray[j].nextElementSibling;
+      if (!nx || !nx.hasAttribute || !nx.hasAttribute("data-bot-face")) stray[j].remove();
+    }
+    // The New bot window: the stone's colour comes from the name, so the engine's face shapes,
+    // "Randomize" and "Lock face" have nothing to choose.
+    var dialogs = document.querySelectorAll('[role="dialog"]');
+    for (var d = 0; d < dialogs.length; d++) {
+      if (!/\b(New|Edit) bot\b|bot profile/i.test((dialogs[d].querySelector("h1,h2,h3,[role=heading]") || {}).textContent || "")) continue;
+      var btns = dialogs[d].querySelectorAll("button");
+      for (var b = 0; b < btns.length; b++) {
+        var t = (btns[b].getAttribute("aria-label") || btns[b].textContent || "").trim();
+        if (FACE_PICKER.test(t) || /^(Randomize|Lock face|Unlock face|Classic shapes|Blob faces)$/i.test(t)) btns[b].setAttribute("data-eca-hide", "");
+      }
+      var notes = dialogs[d].querySelectorAll("div,p,span");
+      for (var n = 0; n < notes.length; n++) {
+        if (!notes[n].children.length && /^Face follows the name\.?$/i.test((notes[n].textContent || "").trim())) notes[n].textContent = "Each bot is a stone of its own colour, set by its name.";
+      }
     }
   }
   function sideMark() {

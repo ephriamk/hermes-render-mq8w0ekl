@@ -2,7 +2,8 @@
    It is an emerald-cut stone that turns its flat top toward you; two eyes of light live there.
 
    window.ECAEmerald.attach(canvas, { mode, face })   draw the character into a square <canvas>
-       mode "idle" (default) follows the shared mood; mode "thinking" is always thinking
+       mode "idle" (default) follows the shared mood; mode "thinking" is always thinking;
+       mode "calm" always rests (bot faces in a list)
        face false gives the plain turning stone (default: a face at 40 px and up)
    window.ECAEmerald.mouth(level)    open the mouth 0..1 right now; call it many times a second with
                                      the loudness of a voice and the mouth follows it (voice mode)
@@ -194,7 +195,7 @@ void main(){
       var dozing = mood === "idle" && Date.now() - active > SLEEP_AFTER;                   // left alone, it nods off
       var dpr = Math.min(2, window.devicePixelRatio || 1), groups = {};
       live.forEach(function (it) {
-        var m = it.mode === "thinking" ? "thinking" : dozing ? "sleep" : mood;
+        var m = it.mode === "thinking" ? "thinking" : it.mode === "calm" ? "idle" : dozing ? "sleep" : mood;
         var face = it.face === undefined ? it.cv.clientWidth >= 40 : !!it.face;
         var key = (face ? "f" : "p") + ":" + m;
         var g = groups[key] || (groups[key] = { m: m, face: face, want: 0, list: [] });

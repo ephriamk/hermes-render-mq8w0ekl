@@ -375,3 +375,8 @@ li[data-slot="sidebar-menu-item"].eca-new > button {
 }
 li[data-slot="sidebar-menu-item"].eca-new > button:hover { border-color: rgba(52, 211, 153, .6) !important; background: rgba(16, 185, 129, .2) !important; }
 li[data-slot="sidebar-menu-item"].eca-new i.codicon::before { content: "\ea60" !important; }   /* plus */
+
+/* ── P13. Bot faces are small stones (skin.js botGems): the engine's drawing is hidden, the stone
+   sits in its place. ── */
+svg[data-bot-face].eca-face-off { display: none !important; }
+canvas.eca-bot-gem { display: block; flex: none; }
