@@ -28,7 +28,7 @@
   // set-up areas (providers, catalogues, profiles, messaging bridges) are
   // hidden, and its maker's names do not appear.
   var HIDE_MENU = { "Capabilities": 1, "Messaging": 1 };
-  var BLOCKED_ROUTES = /^#\/(capabilities|messaging|settings|bots|profiles|gateways|kanban|connectors|plugins|skills)(\/|\?|$)/;
+  var BLOCKED_ROUTES = /^#\/(capabilities|messaging|settings|profiles|gateways|kanban|connectors|plugins|skills)(\/|\?|$)/;
   // Never touched: what people and the agent wrote.
   var KEEP = '[data-slot="aui_thread-content"],[data-slot="row-button"],[data-slot="pane-tab"],[role="textbox"],textarea,input,#eca-banner,#eca-chip,#eca-logo,#eca-side-mark,.xterm,pre,code';
   var CHROME_IN_THREAD = '[data-slot="aui_error-card"],[data-slot="aui_system-message-root"],[data-slot="aui_response-loading"]';
@@ -146,7 +146,25 @@
       }, 500);
     }
   }
+  // The sidebar's own words, in ECA's: conversations are "chats". Only the screen's labels are
+  // touched (exact matches), never a chat's own title.
+  var RELABEL = { "Sessions": "Chats", "New session": "New chat", "Cron jobs": "Scheduled", "Search sessions...": "Search chats" };
+  function relabel() {
+    var spots = document.querySelectorAll('[data-slot="pane-tab"][aria-label="Sessions"] span, button[class*="section-label"] span, li[data-slot="sidebar-menu-item"] span, [data-slot="pane-tab"] span');
+    for (var i = 0; i < spots.length; i++) {
+      var sp = spots[i];
+      if (sp.children.length) continue;
+      var t = (sp.textContent || "").trim(), to = RELABEL[t] || RELABEL[t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()];
+      if (to && sp.textContent !== to) sp.textContent = to;
+      if (to === "New chat") { var li = sp.closest('li[data-slot="sidebar-menu-item"]'); if (li && !li.classList.contains("eca-new")) li.classList.add("eca-new"); }
+    }
+    var inputs = document.querySelectorAll('[data-slot="sidebar"] input[placeholder]');
+    for (var j = 0; j < inputs.length; j++) {
+      if (/^Search sessions/.test(inputs[j].getAttribute("placeholder") || "")) inputs[j].setAttribute("placeholder", "Search chats");
+    }
+  }
   function strip() {
+    relabel();
     toolLabels();
     thinkingGems();
     companion();

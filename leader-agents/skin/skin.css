@@ -68,7 +68,6 @@ footer[data-slot="statusbar"],
 button[aria-label="Open settings"],
 button[aria-label="Layout editor"],
 button[aria-label="Swap sidebar sides"],
-[role="tab"][aria-label="Bots"],
 button[aria-label="Voice dictation"],
 button[aria-label="Start voice conversation"],
 button[aria-label="Voice chat engine"],
@@ -334,3 +333,45 @@ p.wordmark.eca-has-logo + p { font-size: 15px; }
 @media (min-width: 900px) { html.eca-pal-on [data-slot="aui_thread-content"] { padding-right: 132px !important; } }
 @media (min-width: 900px) and (max-width: 1100px) { html.eca-pal-on [data-slot="aui_thread-content"] { padding-right: 96px !important; } }
 
+
+
+/* ── P12. The sidebar in ECA's own look (11-22): small emerald stones for section marks, plain-case
+   headings, a pill switch for Chats / Bots, a real "New chat" button. Labels are set in skin.js. ── */
+button[class*="section-label"] .dither {
+  background: linear-gradient(135deg, #6ee7b7, #059669 60%, #064e3b) !important;
+  -webkit-mask: none !important; mask: none !important;
+  width: 7px !important; height: 7px !important; transform: rotate(45deg); border-radius: 1.5px;
+  box-shadow: 0 0 6px rgba(16, 185, 129, .55); opacity: 1 !important;
+}
+button[class*="section-label"] span.uppercase,
+div[class*="group/workspace"] span.uppercase {
+  text-transform: none !important; letter-spacing: .01em !important; font-size: 12px !important;
+}
+button[class*="section-label"] span.uppercase { color: #a7f3d0 !important; font-weight: 600 !important; }
+div[class*="group/workspace"] span.uppercase { color: rgba(167, 243, 208, .45) !important; font-weight: 500 !important; }
+[data-slot="sidebar"] span.size-1.rounded-full {
+  width: 5px !important; height: 5px !important; border-radius: 1px !important; transform: rotate(45deg);
+  background: rgba(110, 231, 183, .35) !important;
+}
+[data-slot="sidebar"] [data-slot="kbd-group"] { display: none !important; }
+[data-slot="pane-tab"] { text-transform: none !important; letter-spacing: 0 !important; }
+[data-slot="pane-tab"] * { text-transform: none !important; letter-spacing: 0 !important; }
+[data-slot="pane-tab"][aria-label="Sessions"],
+[data-slot="pane-tab"][aria-label="Bots"] {
+  font-size: 12.5px !important; border-radius: 999px !important; margin: 5px 2px !important;
+  height: auto !important; padding: 3px 12px !important; border: 0 !important; box-shadow: none !important;
+  color: var(--eca-text-2);
+}
+[data-slot="pane-tab"][aria-label="Sessions"]::before, [data-slot="pane-tab"][aria-label="Sessions"]::after,
+[data-slot="pane-tab"][aria-label="Bots"]::before, [data-slot="pane-tab"][aria-label="Bots"]::after { display: none !important; }
+[data-slot="pane-tab"][aria-label="Sessions"][aria-selected="true"],
+[data-slot="pane-tab"][aria-label="Bots"][aria-selected="true"] { background: rgba(16, 185, 129, .16) !important; color: #d1fae5 !important; }
+/* "New chat": the one action in the list that starts something, so it reads as a button. */
+li[data-slot="sidebar-menu-item"].eca-new > button {
+  margin: 4px 6px 6px !important; width: calc(100% - 12px) !important;
+  border: 1px solid rgba(16, 185, 129, .32) !important;
+  background: linear-gradient(180deg, rgba(16, 185, 129, .16), rgba(16, 185, 129, .06)) !important;
+  color: #d1fae5 !important;
+}
+li[data-slot="sidebar-menu-item"].eca-new > button:hover { border-color: rgba(52, 211, 153, .6) !important; background: rgba(16, 185, 129, .2) !important; }
+li[data-slot="sidebar-menu-item"].eca-new i.codicon::before { content: "\ea60" !important; }   /* plus */

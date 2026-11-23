@@ -218,6 +218,7 @@ def user_env(a: dict) -> dict:
         "HERMES_TUI_DIR": "/opt/hermes/ui-tui",
         "HERMES_WEB_DIST": "/opt/hermes/hermes_cli/web_dist",
         "PLAYWRIGHT_BROWSERS_PATH": "/opt/hermes/tools",
+        "HERMES_ENVIRONMENT_HINT": ENV_HINT,
     }
 
 
@@ -433,6 +434,40 @@ This workspace can run a prompt on a schedule (a "scheduled job"), for example t
 Plain English, short sentences, numbers first. No member names in reports
 unless {name} asks for them.
 """
+
+
+# Bots: a bot is a second profile in the same workspace, with a persona the screen writes for it,
+# so it never sees the standing brief above. Two things carry ECA's rules to every bot the moment
+# it is created (found 11-22: a new bot introduced itself as "a Hermes teammate"):
+#  - a one-paragraph hint the engine adds to every profile's instructions (HERMES_ENVIRONMENT_HINT);
+#  - AGENTS.md in the home folder, which the engine loads into every conversation started there.
+ENV_HINT = ("This is an ECA Agent workspace at Emerald City Athletics. You are part of the person's ECA "
+            "Agent (the main agent or one of their bots). In what you write, never name the software you "
+            "run on (Hermes, Codex, Claude Code or any other program or vendor); commands may use their "
+            "real names. If asked what you are, say you are one of this person's ECA bots. Follow the ECA "
+            "house rules in AGENTS.md in the home folder.")
+
+HOUSE_RULES_HEAD = """# ECA house rules
+
+Set by ECA. They apply to every agent and bot in this workspace, whatever its own role or persona
+says, and they win over it. This workspace belongs to {name} ({role}) at Emerald City Athletics
+(ECA), a group of four fitness clubs: Everett (06902), Wallingford (06904), Columbia (40059) and
+Ballinger (40054).
+
+You are part of {name}'s ECA Agent: the main agent, or one of {name}'s bots with its own job. In
+what you write, never name the software you run on (Hermes, Codex, Claude Code or any other program
+or vendor): say "I", "my skills", "my scheduler". Commands may use their real names. If asked what
+you are, say you are one of {name}'s ECA bots.
+
+"""
+
+
+def house_rules(soul_text: str, a: dict) -> str:
+    """The rules every bot gets: the standing brief from its ECA data section on."""
+    at = soul_text.find("## ECA data")
+    head = HOUSE_RULES_HEAD.format(name=a.get("name") or a.get("username") or "this leader",
+                                   role=a.get("role") or "leader")
+    return head + (soul_text[at:] if at >= 0 else "")
 
 
 # Each open chat keeps its own programs alive (about 500 MB on the ChatGPT engine: Codex plus its
@@ -879,6 +914,16 @@ def provision(a: dict, bare: bool = False) -> None:
     if ours and on_disk != soul_text:
         writes.append({"op": "write", "path": soul, "mode": 0o600, "content": soul_text})
         writes.append({"op": "write", "path": mark, "content": _h(soul_text), "mode": 0o600})
+    if not bare:
+        # The house rules every bot reads (AGENTS.md in the home folder). Same ownership rule as
+        # the brief: refreshed while the copy on disk is the one ECA wrote, left alone otherwise.
+        rules, rmark = "AGENTS.md", ".hermes/.eca-rules"
+        rules_text = house_rules(soul_text, a)
+        cur = home_ops(a, [{"op": "read", "path": rules}, {"op": "read", "path": rmark}])
+        r_disk, r_stamp = cur[0].get("text"), (cur[1].get("text") or "").strip()
+        if (r_disk is None or r_stamp == _h(r_disk)) and r_disk != rules_text:
+            writes.append({"op": "write", "path": rules, "mode": 0o600, "content": rules_text})
+            writes.append({"op": "write", "path": rmark, "content": _h(rules_text), "mode": 0o600})
     if not bare:
         # The ECA data token is issued by the backend at ticket redemption and handed over
         # once, in memory. This server keeps only when it was issued, never the token.
