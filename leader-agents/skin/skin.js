@@ -572,7 +572,11 @@
     if (!force && Date.now() - usageAt < 110000) return;
     usageAt = Date.now();
     fetch("/_eca/usage", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d) { usage = d; drawUsage(); } }).catch(function () {});
+      .then(function (d) {
+        if (!d) return;
+        if (d.available || !usage) { usage = d; drawUsage(); }
+        if (!d.available) setTimeout(function () { loadUsage(true); }, d.reason === "checking" ? 6000 : 30000);   // first read is still running
+      }).catch(function () {});
   }
   function fillPanel(pop) {
     while (pop.firstChild) pop.removeChild(pop.firstChild);
