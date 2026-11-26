@@ -797,6 +797,10 @@ SKILLS_HELPER = r'''
 import hashlib, json, os, shutil, stat, sys, time
 req = json.load(sys.stdin)
 src, hh = req["src"], req.get("hermes_home") or os.environ["HERMES_HOME"]
+if req.get("profile"):                     # a bot: its own Hermes home under profiles/<name>
+    hh = os.path.join(os.environ["HERMES_HOME"], "profiles", req["profile"])
+    if os.path.islink(hh) or not os.path.isdir(hh):
+        print(json.dumps({"error": "no such bot"})); sys.exit(1)
 root = os.path.join(hh, "skills"); cat = os.path.join(root, "eca"); mpath = os.path.join(root, ".eca_manifest.json")
 res = {"installed": [], "updated": [], "unchanged": [], "kept_own": [], "removed": [], "set_aside": []}
 def files(d):
@@ -837,6 +841,10 @@ pack = {n: os.path.join(src, n) for n in sorted(os.listdir(src))
         if os.path.isfile(os.path.join(src, n, "SKILL.md"))}
 for name, sdir in pack.items():
     target = os.path.join(cat, name); new = tree_hash(sdir); owned = name in man["skills"]
+    if not owned and req.get("profile") and os.path.lexists(target):
+        # A bot's copy of an ECA playbook, made when the bot was cloned (no manifest came with it):
+        # ECA's by name. "" makes any difference from ECA's version go aside before it is replaced.
+        man["skills"][name] = ""; owned = True
     if os.path.lexists(target):
         if not owned:
             res["kept_own"].append(name); continue
@@ -901,6 +909,52 @@ def install_skills(a: dict) -> None:
         log(f"{a['slug']}: could not install the ECA skills ({type(exc).__name__})")
 
 
+# Runs AS THE LEADER: the names of their bots (engine profiles under $HERMES_HOME/profiles/).
+LIST_BOTS = r'''
+import json, os, re
+d = os.path.join(os.environ["HERMES_HOME"], "profiles"); out = []
+if os.path.isdir(d) and not os.path.islink(d):
+    for n in sorted(os.listdir(d)):
+        p = os.path.join(d, n)
+        if re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", n) and os.path.isdir(p) and not os.path.islink(p) \
+                and os.path.isfile(os.path.join(p, "config.yaml")):
+            out.append(n)
+print(json.dumps(out))
+'''
+
+
+def sync_bots(a: dict) -> None:
+    """Bring every bot in line with the main agent: the chat limits and self-review switches in its
+    settings, and ECA's current playbooks. A bot is a copy taken when it was made; without this a
+    later change reaches the main agent only (found 11-25). Never fatal."""
+    try:
+        r = run_as(a, [PY, "-I", "-c", LIST_BOTS], timeout=60)
+        bots = json.loads((r.stdout or "[]").strip().splitlines()[-1] or "[]")
+    except Exception as exc:
+        log(f"{a['slug']}: could not list the bots ({type(exc).__name__})"); return
+    for b in bots:
+        try:
+            cfg = f".hermes/profiles/{b}/config.yaml"
+            text = home_ops(a, [{"op": "read", "path": cfg}])[0].get("text") or ""
+            new = with_chat_cache(text) or text
+            new = with_review_off(new) or new
+            notes = []
+            if new != text:
+                if not home_ops(a, [{"op": "write", "path": cfg, "content": new, "mode": 0o600}])[0].get("ok"):
+                    raise RuntimeError("settings not written")
+                notes.append("settings brought in line")
+            if SKILLS_SRC.is_dir():
+                r = run_as(a, [PY, "-I", "-c", SKILLS_HELPER], timeout=120,
+                           stdin=json.dumps({"src": str(SKILLS_SRC), "profile": b}))
+                res = json.loads((r.stdout or "").strip().splitlines()[-1])
+                changed = {k: v for k, v in res.items() if v and k != "unchanged"}
+                if changed:
+                    notes.append("playbooks: " + "; ".join(f"{k.replace('_', ' ')} {', '.join(v)}" for k, v in changed.items()))
+            log(f"{a['slug']}: bot {b}: " + (", ".join(notes) if notes else "in line, nothing to change")[:300])
+        except Exception as exc:
+            log(f"{a['slug']}: bot {b}: could not bring in line ({type(exc).__name__})")
+
+
 def prepare_known_homes() -> None:
     """At boot, off the main thread: take every existing home through the image steps and the skills
     refresh, so the backup exists and the home is ready before its owner next opens it."""
@@ -916,6 +970,7 @@ def prepare_known_homes() -> None:
                 image_backup(a)
                 post_upgrade(a)
                 install_skills(a)
+                sync_bots(a)
         except Exception as exc:
             log(f"{a.get('slug')}: could not prepare the workspace for this image: {str(exc)[:200]}")
 
@@ -995,6 +1050,7 @@ def provision(a: dict, bare: bool = False) -> None:
         with _prep_lock(a):
             post_upgrade(a)     # once per image, before the gateway starts
             install_skills(a)
+            sync_bots(a)
     _quarantine_autorun(a)
     if eng == "codex":
         _codex_setup(a)
