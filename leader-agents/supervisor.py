@@ -407,6 +407,10 @@ This workspace can run a prompt on a schedule (a "scheduled job"), for example t
   ChatGPT engine does not expose it), use the terminal in this workspace instead, for example:
   `hermes cron create "0 7 * * 1-5" "Run the eca-morning-brief playbook for Everett (06902)" --skill eca-morning-brief --name "Morning brief" --timezone America/Los_Angeles`
   then `hermes cron list` to confirm it is there. Always pass the Pacific time zone.
+- Keep scheduled jobs at least 10 minutes apart, across you and every bot: before picking a time,
+  read `hermes cron list` and each bot's list (`hermes -p <bot> cron list`; the bots are the folders
+  in ~/.hermes/profiles/). Several jobs at the same minute can run the workspace out of memory and
+  stop it mid-answer. If {name} asks for a time that is taken, use the next free 10-minute slot and say so.
 - Only say a job is scheduled after you have seen it in the list. Never promise a recurring report
   you did not create and confirm.
 - A workspace with a scheduled job is kept running, and is started again after a server update, so
