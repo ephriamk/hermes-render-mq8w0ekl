@@ -468,6 +468,53 @@ you are, say you are one of {name}'s ECA bots.
 """
 
 
+# The usage meter: how much of the person's own AI plan (ChatGPT or Claude) is used in each limit
+# window. Read with the engine's own `hermes usage --json` as the person (their sign-in, their plan),
+# at most every two minutes per person; only the plan, the percentages and the reset times leave.
+_usage_cache: dict = {}
+_usage_busy: set = set()
+
+
+def read_usage(a: dict) -> dict:
+    slug, now = a["slug"], time.time()
+    hit = _usage_cache.get(slug)
+    if hit and now - hit[0] < (120 if hit[1].get("available") else 60):
+        return hit[1]
+    if slug in _usage_busy:
+        return hit[1] if hit else {"available": False, "reason": "checking"}
+    _usage_busy.add(slug)
+    try:
+        try:
+            r = run_as(a, [HERMES, "usage", "--json"], timeout=45)
+            out = r.stdout or ""
+            d = json.loads(out[out.index("{"):]) if "{" in out else None
+        except Exception:
+            d = None
+        wins = []
+        for w in ((d or {}).get("windows") or [])[:4]:
+            try:
+                used = max(0.0, min(100.0, float(w.get("used_percent"))))
+            except (TypeError, ValueError):
+                continue
+            wins.append({"label": str(w.get("label") or "")[:40], "used": round(used, 1),
+                         "resets_at": str(w.get("resets_at") or "")[:40] or None})
+        notes = []
+        for t in ((d or {}).get("details") or []):
+            m = re.search(r"(\d+) resets? banked", str(t))
+            if m:
+                n = int(m.group(1))
+                notes.append(f"{n} extra reset{'s' if n != 1 else ''} banked with {service_name(a)}")
+        doc = {"available": bool(wins), "service": service_name(a),
+               "plan": str((d or {}).get("plan") or "")[:40] or None, "windows": wins, "notes": notes[:3],
+               "fetched_at": (d or {}).get("fetched_at")}
+        if not wins:
+            doc["reason"] = "no usage figures from your AI plan right now"
+        _usage_cache[slug] = (now, doc)
+        return doc
+    finally:
+        _usage_busy.discard(slug)
+
+
 BOT_LOOKS = ".hermes/.eca-bot-looks.json"
 BOT_CUTS = ("emerald", "round", "square", "kite", "crystal", "shield")
 
@@ -1834,6 +1881,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # "claude_signed_in" is the sign-in to whichever AI service this leader uses.
             return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a),
                                     "service": service_name(a)})
+        if path == "/_eca/usage":
+            if not s["confirmed"]:
+                return self._send(401)
+            return self._json(200, read_usage(a))
         if path == "/_eca/bot-looks":
             # The stone (colour and cut) the person picked for each bot. Kept in their own home.
             if not s["confirmed"]:

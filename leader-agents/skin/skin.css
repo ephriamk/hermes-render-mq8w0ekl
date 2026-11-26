@@ -393,3 +393,27 @@ canvas.eca-bot-gem { display: block; flex: none; }
 #eca-gem-pick button:hover { border-color: rgba(167, 243, 208, .45); }
 #eca-gem-pick button.eca-on { border-color: #34d399; box-shadow: 0 0 0 2px rgba(16, 185, 129, .28); color: #d1fae5; }
 #eca-gem-pick .eca-pick-auto.eca-on { background: rgba(16, 185, 129, .16); }
+
+/* ── P15. Usage meter in the identity chip, and its panel ── */
+#eca-chip button.eca-meter { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; }
+#eca-chip button.eca-meter[hidden] { display: none; }
+.eca-meter-track { display: block; width: 34px; height: 5px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden; }
+.eca-meter-track b, .eca-u-bar b { display: block; height: 100%; border-radius: inherit; background: var(--eca-accent); transition: width 400ms var(--eca-ease); }
+.eca-meter-pct { font-variant-numeric: tabular-nums; color: var(--eca-text); }
+[data-tone="warm"] .eca-meter-track b, .eca-u-row[data-tone="warm"] .eca-u-bar b { background: var(--eca-warn); }
+[data-tone="hot"] .eca-meter-track b, .eca-u-row[data-tone="hot"] .eca-u-bar b { background: #f87171; }
+#eca-chip button.eca-meter[data-tone="hot"] { border-color: rgba(248,113,113,.45); }
+#eca-usage-pop {
+  position: fixed; z-index: 2147482001; width: 300px; max-width: calc(100vw - 16px); padding: 14px 16px 12px;
+  border-radius: var(--eca-radius); background: var(--eca-elevated); border: 1px solid var(--eca-border-strong);
+  box-shadow: 0 18px 50px rgba(0,0,0,.45); color: var(--eca-text); font-size: 13px; line-height: 1.4;
+}
+#eca-usage-pop .eca-u-head { font-weight: 600; margin-bottom: 10px; }
+#eca-usage-pop .eca-u-row { margin: 10px 0; }
+#eca-usage-pop .eca-u-top { display: flex; justify-content: space-between; gap: 8px; color: var(--eca-text-2); }
+#eca-usage-pop .eca-u-top strong { color: var(--eca-text); font-variant-numeric: tabular-nums; }
+#eca-usage-pop .eca-u-bar { display: block; height: 8px; margin: 6px 0 4px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+#eca-usage-pop .eca-u-sub { color: var(--eca-text-3); font-size: 12px; }
+#eca-usage-pop .eca-u-note { margin: 8px 0 0; color: var(--eca-accent-text); font-size: 12px; }
+#eca-usage-pop .eca-u-foot { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--eca-border); color: var(--eca-text-3); font-size: 11.5px; }
+@media (max-width: 640px) { #eca-usage-pop { right: 8px !important; } }

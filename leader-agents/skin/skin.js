@@ -495,6 +495,12 @@
       c.appendChild(av);
       c.appendChild(el("span", { "class": "eca-org" }, "ECA"));
       c.appendChild(el("span", { "class": "eca-name" }, name));
+      var meter = el("button", { type: "button", "class": "eca-meter", hidden: "", "aria-haspopup": "dialog",
+                                 "aria-expanded": "false", title: "How much of your plan is used" });
+      var track = el("i", { "class": "eca-meter-track", "aria-hidden": "true" }); track.appendChild(el("b"));
+      meter.appendChild(track); meter.appendChild(el("span", { "class": "eca-meter-pct" }, ""));
+      meter.addEventListener("click", function (e) { e.stopPropagation(); usagePanel(); });
+      c.appendChild(meter);
       var re = el("button", { type: "button", "class": "eca-reconnect", hidden: "" }, "Reconnect " + service);
       re.addEventListener("click", function () { location.assign("/_eca/connect"); });
       c.appendChild(re);
@@ -518,10 +524,80 @@
       c.appendChild(out);
       document.body.appendChild(c);
     }
+    if (claudeOn !== false) loadUsage(false); else { usage = null; drawUsage(); }
     c.classList.toggle("eca-claude-off", claudeOn === false);
     var r = c.querySelector(".eca-reconnect");
     if (claudeOn === false) r.removeAttribute("hidden"); else r.setAttribute("hidden", "");
   }
+  // P15. Usage meter: how much of the person's own AI plan is used (the engine's account limits,
+  // read by the supervisor at /_eca/usage). The chip shows the fullest window; the panel shows all.
+  var usage = null, usageAt = 0;
+  function usageTone(p) { return p >= 85 ? "hot" : p >= 60 ? "warm" : "ok"; }
+  function whenText(iso) {
+    if (!iso) return "";
+    var d = new Date(iso); if (isNaN(d)) return "";
+    var ms = d - Date.now(), h = ms / 3600000;
+    var at = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return h > 0 && h < 24 ? "in " + (h < 1 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(h) + " h") + " (" + at + ")" : at;
+  }
+  function drawUsage() {
+    var m = document.querySelector("#eca-chip .eca-meter"); if (!m) return;
+    var w = usage && usage.available ? usage.windows.slice().sort(function (x, y) { return y.used - x.used; })[0] : null;
+    if (!w) { m.setAttribute("hidden", ""); return; }
+    m.removeAttribute("hidden");
+    m.setAttribute("data-tone", usageTone(w.used));
+    m.querySelector("b").style.width = Math.max(3, w.used) + "%";
+    m.querySelector(".eca-meter-pct").textContent = Math.round(w.used) + "%";
+    m.setAttribute("aria-label", (usage.service || "Plan") + " usage: " + Math.round(w.used) + "% of the " + (w.label || "") + " limit used");
+    var pop = document.getElementById("eca-usage-pop"); if (pop) fillPanel(pop);
+  }
+  function loadUsage(force) {
+    if (!force && Date.now() - usageAt < 110000) return;
+    usageAt = Date.now();
+    fetch("/_eca/usage", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) { usage = d; drawUsage(); } }).catch(function () {});
+  }
+  function fillPanel(pop) {
+    while (pop.firstChild) pop.removeChild(pop.firstChild);
+    var u = usage || {};
+    pop.appendChild(el("div", { "class": "eca-u-head" }, (u.service || "Your AI") + (u.plan ? " " + u.plan : "") + " · your plan"));
+    if (!u.available) {
+      pop.appendChild(el("p", { "class": "eca-u-note" }, "No usage figures from your plan right now. Try again in a minute."));
+    }
+    (u.windows || []).forEach(function (w) {
+      var row = el("div", { "class": "eca-u-row", "data-tone": usageTone(w.used) });
+      var top = el("div", { "class": "eca-u-top" });
+      top.appendChild(el("span", null, (w.label || "Limit") + " limit"));
+      top.appendChild(el("strong", null, Math.round(w.used) + "% used"));
+      row.appendChild(top);
+      var bar = el("i", { "class": "eca-u-bar", "aria-hidden": "true" }); var fill = el("b"); fill.style.width = Math.max(2, w.used) + "%";
+      bar.appendChild(fill); row.appendChild(bar);
+      if (w.resets_at) row.appendChild(el("div", { "class": "eca-u-sub" }, "Resets " + whenText(w.resets_at)));
+      pop.appendChild(row);
+    });
+    (u.notes || []).forEach(function (n) { pop.appendChild(el("p", { "class": "eca-u-note" }, n)); });
+    pop.appendChild(el("p", { "class": "eca-u-foot" }, "This is your whole " + (u.service || "AI") +
+      " plan, not only what you use here. When a limit is reached your agent pauses until it resets."));
+  }
+  function usagePanel() {
+    var m = document.querySelector("#eca-chip .eca-meter");
+    var pop = document.getElementById("eca-usage-pop");
+    if (pop) { pop.remove(); if (m) m.setAttribute("aria-expanded", "false"); return; }
+    pop = el("div", { id: "eca-usage-pop", role: "dialog", "aria-label": "Plan usage" });
+    fillPanel(pop); document.body.appendChild(pop);
+    var r = m.getBoundingClientRect();
+    pop.style.top = Math.round(r.bottom + 8) + "px";
+    pop.style.right = Math.max(8, Math.round(window.innerWidth - r.right - 40)) + "px";
+    m.setAttribute("aria-expanded", "true");
+    loadUsage(true);
+  }
+  document.addEventListener("click", function (e) {
+    var pop = document.getElementById("eca-usage-pop");
+    if (pop && !pop.contains(e.target)) { pop.remove(); var m = document.querySelector("#eca-chip .eca-meter"); if (m) m.setAttribute("aria-expanded", "false"); }
+  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { var pop = document.getElementById("eca-usage-pop"); if (pop) pop.remove(); } });
+  setInterval(function () { if (!document.hidden && document.getElementById("eca-chip")) loadUsage(false); }, 30000);
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) loadUsage(false); });
   function banner(show) {
     var old = document.getElementById("eca-banner");
     if (!show || dismissed) { if (old) old.remove(); return; }
