@@ -475,40 +475,50 @@ _usage_cache: dict = {}
 _usage_busy: set = set()
 
 
+# Every AI account a workspace can use, as the engine names it, and what the person calls it. A chat
+# can run on either (the model picker), so the meter reads each one that answers.
+USAGE_ACCOUNTS = (("openai-codex", "ChatGPT"), (PROVIDER, "Claude"))
+
+
+def _usage_one(a: dict, provider: str, label: str):
+    try:
+        r = run_as(a, [HERMES, "usage", "--provider", provider, "--json"], timeout=45)
+        out = r.stdout or ""
+        d = json.loads(out[out.index("{"):]) if "{" in out else None
+    except Exception:
+        return None
+    wins = []
+    for w in ((d or {}).get("windows") or [])[:4]:
+        try:
+            used = max(0.0, min(100.0, float(w.get("used_percent"))))
+        except (TypeError, ValueError):
+            continue
+        wins.append({"label": str(w.get("label") or "")[:40], "used": round(used, 1),
+                     "resets_at": str(w.get("resets_at") or "")[:40] or None})
+    if not wins:
+        return None
+    notes = []
+    for t in (d.get("details") or []):
+        m = re.search(r"(\d+) resets? banked", str(t))
+        if m:
+            n = int(m.group(1))
+            notes.append(f"{n} extra reset{'s' if n != 1 else ''} banked")
+        elif str(t).startswith("Extra usage: on"):
+            notes.append("Extra paid usage is on")
+    return {"service": label, "plan": str(d.get("plan") or "")[:40] or None, "windows": wins, "notes": notes[:3]}
+
+
 def read_usage(a: dict) -> dict:
     slug, now = a["slug"], time.time()
     hit = _usage_cache.get(slug)
     if hit and now - hit[0] < (120 if hit[1].get("available") else 60):
         return hit[1]
     if slug in _usage_busy:
-        return hit[1] if hit else {"available": False, "reason": "checking"}
+        return hit[1] if hit else {"available": False, "accounts": [], "reason": "checking"}
     _usage_busy.add(slug)
     try:
-        try:
-            r = run_as(a, [HERMES, "usage", "--json"], timeout=45)
-            out = r.stdout or ""
-            d = json.loads(out[out.index("{"):]) if "{" in out else None
-        except Exception:
-            d = None
-        wins = []
-        for w in ((d or {}).get("windows") or [])[:4]:
-            try:
-                used = max(0.0, min(100.0, float(w.get("used_percent"))))
-            except (TypeError, ValueError):
-                continue
-            wins.append({"label": str(w.get("label") or "")[:40], "used": round(used, 1),
-                         "resets_at": str(w.get("resets_at") or "")[:40] or None})
-        notes = []
-        for t in ((d or {}).get("details") or []):
-            m = re.search(r"(\d+) resets? banked", str(t))
-            if m:
-                n = int(m.group(1))
-                notes.append(f"{n} extra reset{'s' if n != 1 else ''} banked with {service_name(a)}")
-        doc = {"available": bool(wins), "service": service_name(a),
-               "plan": str((d or {}).get("plan") or "")[:40] or None, "windows": wins, "notes": notes[:3],
-               "fetched_at": (d or {}).get("fetched_at")}
-        if not wins:
-            doc["reason"] = "no usage figures from your AI plan right now"
+        accounts = [x for x in (_usage_one(a, p, n) for p, n in USAGE_ACCOUNTS) if x]
+        doc = {"available": bool(accounts), "accounts": accounts, "default": service_name(a)}
         _usage_cache[slug] = (now, doc)
         return doc
     finally:

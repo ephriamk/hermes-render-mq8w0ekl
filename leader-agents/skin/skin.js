@@ -184,6 +184,7 @@
     toolLabels();
     thinkingGems();
     companion();
+    if (usage && activeService() !== usageActive) drawUsage();
     if (document.title !== TITLE) document.title = TITLE;
     if (BLOCKED_ROUTES.test(location.hash)) { location.hash = "#/"; }
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');
@@ -540,15 +541,31 @@
     var at = d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     return h > 0 && h < 24 ? "in " + (h < 1 ? Math.max(1, Math.round(ms / 60000)) + " min" : Math.round(h) + " h") + " (" + at + ")" : at;
   }
+  // Which AI account the open chat runs on, read from the engine's model button (its label names the
+  // provider and the model). Falls back to the workspace's default service.
+  var usageActive = "";
+  function activeService() {
+    var b = document.querySelector('button[data-tour="model-pill"]');
+    var t = b ? (b.getAttribute("aria-label") || "") + " " + (b.textContent || "") : "";
+    if (/claude|anthropic|opus|sonnet|haiku|fable/i.test(t)) return "Claude";
+    if (/chatgpt|codex|gpt|openai/i.test(t)) return "ChatGPT";
+    return (usage && usage.default) || "";
+  }
+  function usageAccounts() {
+    var list = (usage && usage.accounts) || [], act = activeService();
+    return list.slice().sort(function (x, y) { return (y.service === act) - (x.service === act); });
+  }
+  function fullest(acc) { return acc.windows.slice().sort(function (x, y) { return y.used - x.used; })[0]; }
   function drawUsage() {
     var m = document.querySelector("#eca-chip .eca-meter"); if (!m) return;
-    var w = usage && usage.available ? usage.windows.slice().sort(function (x, y) { return y.used - x.used; })[0] : null;
+    usageActive = activeService();
+    var acc = usageAccounts()[0], w = acc && acc.service === usageActive ? fullest(acc) : null;
     if (!w) { m.setAttribute("hidden", ""); return; }
     m.removeAttribute("hidden");
     m.setAttribute("data-tone", usageTone(w.used));
     m.querySelector("b").style.width = Math.max(3, w.used) + "%";
-    m.querySelector(".eca-meter-pct").textContent = Math.round(w.used) + "%";
-    m.setAttribute("aria-label", (usage.service || "Plan") + " usage: " + Math.round(w.used) + "% of the " + (w.label || "") + " limit used");
+    m.querySelector(".eca-meter-pct").textContent = acc.service + " " + Math.round(w.used) + "%";
+    m.setAttribute("aria-label", acc.service + " plan in use in this chat: " + Math.round(w.used) + "% of the " + (w.label || "") + " limit used");
     var pop = document.getElementById("eca-usage-pop"); if (pop) fillPanel(pop);
   }
   function loadUsage(force) {
@@ -559,25 +576,32 @@
   }
   function fillPanel(pop) {
     while (pop.firstChild) pop.removeChild(pop.firstChild);
-    var u = usage || {};
-    pop.appendChild(el("div", { "class": "eca-u-head" }, (u.service || "Your AI") + (u.plan ? " " + u.plan : "") + " · your plan"));
-    if (!u.available) {
+    var list = usageAccounts(), act = activeService();
+    if (!list.length) {
+      pop.appendChild(el("div", { "class": "eca-u-head" }, "Your AI plan"));
       pop.appendChild(el("p", { "class": "eca-u-note" }, "No usage figures from your plan right now. Try again in a minute."));
     }
-    (u.windows || []).forEach(function (w) {
-      var row = el("div", { "class": "eca-u-row", "data-tone": usageTone(w.used) });
-      var top = el("div", { "class": "eca-u-top" });
-      top.appendChild(el("span", null, (w.label || "Limit") + " limit"));
-      top.appendChild(el("strong", null, Math.round(w.used) + "% used"));
-      row.appendChild(top);
-      var bar = el("i", { "class": "eca-u-bar", "aria-hidden": "true" }); var fill = el("b"); fill.style.width = Math.max(2, w.used) + "%";
-      bar.appendChild(fill); row.appendChild(bar);
-      if (w.resets_at) row.appendChild(el("div", { "class": "eca-u-sub" }, "Resets " + whenText(w.resets_at)));
-      pop.appendChild(row);
+    list.forEach(function (u, i) {
+      var sec = el("section", { "class": "eca-u-acct" + (u.service === act ? " eca-u-active" : "") });
+      var head = el("div", { "class": "eca-u-head" }, u.service + (u.plan ? " " + u.plan : ""));
+      if (u.service === act) head.appendChild(el("span", { "class": "eca-u-tag" }, "This chat"));
+      sec.appendChild(head);
+      u.windows.forEach(function (w) {
+        var row = el("div", { "class": "eca-u-row", "data-tone": usageTone(w.used) });
+        var top = el("div", { "class": "eca-u-top" });
+        top.appendChild(el("span", null, (w.label || "Limit")));
+        top.appendChild(el("strong", null, Math.round(w.used) + "% used"));
+        row.appendChild(top);
+        var bar = el("i", { "class": "eca-u-bar", "aria-hidden": "true" }); var fill = el("b"); fill.style.width = Math.max(2, w.used) + "%";
+        bar.appendChild(fill); row.appendChild(bar);
+        if (w.resets_at) row.appendChild(el("div", { "class": "eca-u-sub" }, (w.used >= 100 ? "Used up. Resets " : "Resets ") + whenText(w.resets_at)));
+        sec.appendChild(row);
+      });
+      (u.notes || []).forEach(function (n) { sec.appendChild(el("p", { "class": "eca-u-note" }, n)); });
+      pop.appendChild(sec);
     });
-    (u.notes || []).forEach(function (n) { pop.appendChild(el("p", { "class": "eca-u-note" }, n)); });
-    pop.appendChild(el("p", { "class": "eca-u-foot" }, "This is your whole " + (u.service || "AI") +
-      " plan, not only what you use here. When a limit is reached your agent pauses until it resets."));
+    pop.appendChild(el("p", { "class": "eca-u-foot" }, "Each figure is your whole plan with that service, not only what you use here. " +
+      "The model button under the message box picks which plan a chat uses. When a limit is used up, chats on that plan pause until it resets."));
   }
   function usagePanel() {
     var m = document.querySelector("#eca-chip .eca-meter");

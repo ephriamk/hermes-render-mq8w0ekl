@@ -417,3 +417,7 @@ canvas.eca-bot-gem { display: block; flex: none; }
 #eca-usage-pop .eca-u-note { margin: 8px 0 0; color: var(--eca-accent-text); font-size: 12px; }
 #eca-usage-pop .eca-u-foot { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--eca-border); color: var(--eca-text-3); font-size: 11.5px; }
 @media (max-width: 640px) { #eca-usage-pop { right: 8px !important; } }
+#eca-usage-pop .eca-u-acct + .eca-u-acct { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--eca-border); }
+#eca-usage-pop .eca-u-head { display: flex; align-items: center; gap: 8px; }
+#eca-usage-pop .eca-u-tag { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: #052e1f; background: var(--eca-accent-text); border-radius: 999px; padding: 2px 7px; }
+#eca-usage-pop .eca-u-acct:not(.eca-u-active) { opacity: .78; }
