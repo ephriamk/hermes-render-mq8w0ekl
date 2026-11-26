@@ -508,6 +508,33 @@ def with_chat_cache(cfg_text: str):
     return cfg_text.rstrip("\n") + "\nagent:\n" + CHAT_CACHE
 
 
+# The engine reviews its own work after a task and rewrites playbooks on its own ("self-improvement
+# review", skills.creation_nudge_interval, default every 10 steps), and a second pass (the curator,
+# on unless switched off) marks playbooks stale and archives them. Found 11-22 to 11-25: ECA's
+# playbooks patched 8+ times, unreviewed, on the leader's AI plan. Owner ruling 11-25: both off.
+# ECA's playbooks change only through the skills pack.
+REVIEW_OFF = {"skills": "  creation_nudge_interval: 0\n", "curator": "  enabled: false\n"}
+
+
+def with_review_off(cfg_text: str):
+    """The workspace settings with both self-review passes off, or None when nothing changes (already
+    set, or a section in a form this does not edit)."""
+    out = cfg_text
+    for section, line in REVIEW_OFF.items():
+        key = line.strip().split(":")[0]
+        head = re.search(rf"(?m)^{section}:[ \t]*(#.*)?$", out)
+        if head:
+            body = re.search(rf"(?ms)^{section}:[^\n]*\n((?:[ \t]+[^\n]*\n|\n)*)", out)
+            if body and re.search(rf"(?m)^[ \t]+{key}:", body.group(1)):
+                continue                      # already says something; left as it is
+            out = re.sub(rf"(?m)^({section}:[ \t]*(#.*)?\n)", lambda m: m.group(1) + line, out, count=1)
+        elif re.search(rf"(?m)^{section}:", out):
+            continue                          # e.g. `skills: {}` inline: not edited
+        else:
+            out = out.rstrip("\n") + f"\n{section}:\n" + line
+    return None if out == cfg_text else out
+
+
 def _config_text(a: dict, bare: bool) -> str:
     text = ("webapp:\n"
             "  enabled: true\n"
@@ -530,7 +557,8 @@ def _config_text(a: dict, bare: bool) -> str:
             f"    url: {BACKEND}/api/intel/mcp\n"
             "    headers:\n"
             "      Authorization: \"Bearer ${ECA_GATEWAY_TOKEN}\"\n"
-            "    timeout: 120\n")
+            "    timeout: 120\n" +
+            "skills:\n" + REVIEW_OFF["skills"] + "curator:\n" + REVIEW_OFF["curator"])
 
 
 # ───────────────────────────── image upgrades ─────────────────────────────
@@ -920,6 +948,14 @@ def provision(a: dict, bare: bool = False) -> None:
             log(f"{a['slug']}: chat limits set (2 warm chats, idle ones closed after 10 minutes)")
         elif "agent_cache:" not in cfg_text:
             log(f"{a['slug']}: chat limits NOT set: the settings file has an agent line in another form")
+        base = limited or cfg_text
+        quiet = with_review_off(base)
+        if quiet:
+            if limited:
+                writes[-1]["content"] = quiet
+            else:
+                writes.append({"op": "write", "path": cfg, "content": quiet, "mode": 0o600})
+            log(f"{a['slug']}: self-review of playbooks switched off (skills nudge 0, curator off)")
     # The agent's standing brief. Written once, and refreshed when ECA's version of it changes,
     # but only while the copy in the home is still the one ECA wrote (a leader's own edits stay).
     soul_text = SOUL.format(name=a.get("name") or a.get("username") or "this leader",
