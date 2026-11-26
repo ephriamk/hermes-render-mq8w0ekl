@@ -430,6 +430,18 @@ This workspace can run a prompt on a schedule (a "scheduled job"), for example t
   how they like reports) or corrects you. Keep it under 100 lines; merge or remove stale lines.
 - Never put pay figures, member names or anyone else's private details in it.
 
+## Gmail, Google Calendar and Google Drive
+
+- On ChatGPT, {name}'s own ChatGPT apps for Gmail, Google Calendar and Google Drive may be connected
+  (they connect them on the Connections page). Use them when asked about their mail, meetings or files.
+- Read and summarise freely. Never send, reply to, forward or delete email, and never create, change or
+  cancel calendar events or share files, unless {name} asks for that exact action in this chat; for
+  mail, prefer writing a draft and showing it as a draft card.
+- If one of them is not connected and the request needs it, say so in one line: "Connect Gmail on the
+  Connections page (top right), then ask me again."
+- Mail and files are private to {name}: never copy their contents into saved files, schedules or notes
+  unless asked, and never into anything another person can see.
+
 ## This workspace
 
 - It belongs to {name} alone. Other leaders have their own and cannot see this one. Keep working files in
@@ -523,6 +535,75 @@ def read_usage(a: dict) -> dict:
         return doc
     finally:
         _usage_busy.discard(slug)
+
+
+# Google through the person's own ChatGPT (11-25): ChatGPT's official Gmail, Google Calendar and
+# Google Drive apps, connected once at chatgpt.com, are usable by the ChatGPT engine with no Google
+# setup on ECA's side. This asks the person's ChatGPT program which apps are connected (fast: it
+# reads the account's installed list). Runs AS THE LEADER; prints only app names.
+APPS_HELPER = r"""
+import glob, json, os, select, subprocess, sys, time
+node = sorted(glob.glob("/opt/hermes/tools/node-*/bin"))
+codex = os.path.join(node[-1], "codex") if node else "codex"
+env = dict(os.environ, PATH=(node[-1] + ":" if node else "") + os.environ.get("PATH", ""))
+p = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                     stderr=subprocess.DEVNULL, text=True, env=env)
+def send(o):
+    p.stdin.write(json.dumps(o) + "\n"); p.stdin.flush()
+def wait(i, t):
+    end = time.time() + t
+    while time.time() < end:
+        r, _, _ = select.select([p.stdout], [], [], 0.5)
+        if r:
+            line = p.stdout.readline()
+            if not line:
+                return None
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if m.get("id") == i:
+                return m
+    return None
+try:
+    send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "eca-connections", "version": "1"}}})
+    if wait(1, 20) is None:
+        raise SystemExit
+    send({"method": "initialized"})
+    send({"id": 2, "method": "app/installed", "params": {}})
+    r = wait(2, 30) or {}
+    apps = (r.get("result") or {}).get("apps") or []
+    print(json.dumps({"ok": "result" in r, "apps": sorted({str(a.get("runtimeName") or "") for a in apps
+                                                          if a.get("enabled") and a.get("callable")} - {""})}))
+finally:
+    p.kill()
+"""
+# ChatGPT's own catalog entries (the same for every account): where a person connects each one.
+CHATGPT_GOOGLE_APPS = {
+    "Gmail": "https://chatgpt.com/apps/gmail/connector_2128aebfecb84f64a069897515042a44",
+    "Google Calendar": "https://chatgpt.com/apps/google-calendar/connector_947e0d954944416db111db556030eea6",
+    "Google Drive": "https://chatgpt.com/apps/google-drive/connector_5f3c8c41a1e54ad7a76272c89e2554fa",
+}
+_apps_cache: dict = {}
+
+
+def chatgpt_apps(a: dict, fresh: bool = False) -> dict:
+    """Which of ChatGPT's Google apps this person has connected, with each one's connect link."""
+    if engine(a) != "codex":
+        return {"via": None, "apps": {}}
+    hit = _apps_cache.get(a["slug"])
+    if hit and not fresh and time.time() - hit[0] < 30:
+        return hit[1]
+    try:
+        r = run_as(a, [PY, "-I", "-c", APPS_HELPER], timeout=60)
+        d = json.loads((r.stdout or "").strip().splitlines()[-1])
+        have = set(d.get("apps") or []) if d.get("ok") else None
+    except Exception:
+        have = None
+    doc = {"via": "ChatGPT", "checked": have is not None,
+           "apps": {n: {"connected": bool(have and n in have), "connect_url": u} for n, u in CHATGPT_GOOGLE_APPS.items()}}
+    _apps_cache[a["slug"]] = (time.time(), doc)
+    return doc
 
 
 BOT_LOOKS = ".hermes/.eca-bot-looks.json"
@@ -1891,6 +1972,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # "claude_signed_in" is the sign-in to whichever AI service this leader uses.
             return self._json(200, {"name": self._name(a), "claude_signed_in": claude_signed_in(a),
                                     "service": service_name(a)})
+        if path == "/_eca/apps":
+            if not s["confirmed"]:
+                return self._send(401)
+            return self._json(200, chatgpt_apps(a, fresh="fresh" in parse_qs(url.query)))
         if path == "/_eca/usage":
             if not s["confirmed"]:
                 return self._send(401)

@@ -10,11 +10,11 @@
       desc: "Dashboards, Stats, schedule, sales, members and pay, as your portal shows them." },
     { name: "ECA knowledge", icon: "i-book", group: "Connected", state: "Always on",
       desc: "What every ECA number means, and the ECA playbook." },
-    { name: "Gmail", icon: "i-gmail", group: "Available", desc: "Search and read mail. Writes drafts; never sends.",
+    { name: "Gmail", icon: "i-gmail", group: "Available", google: true, desc: "Search and read your mail.",
       action: { label: "Connect", href: portal } },
-    { name: "Google Calendar", icon: "i-gcal", group: "Available", desc: "See your meetings alongside the club schedule.",
+    { name: "Google Calendar", icon: "i-gcal", group: "Available", google: true, desc: "See your meetings alongside the club schedule.",
       action: { label: "Connect", href: portal } },
-    { name: "Google Drive", icon: "i-gdrive", group: "Available", desc: "Search and read your Docs, Sheets and Slides.",
+    { name: "Google Drive", icon: "i-gdrive", group: "Available", google: true, desc: "Search and read your Docs, Sheets and Slides.",
       action: { label: "Connect", href: portal } },
     { name: "Google Sheets", icon: "i-sheets", group: "Coming soon", desc: "Update trackers and greensheets." },
     { name: "Slack", icon: "i-slack", group: "Coming soon", desc: "Briefs and questions in a channel." },
@@ -57,7 +57,8 @@
         row.appendChild(body);
         var side = el("div", "side"), a = it.action;
         if (it.state) side.appendChild(el("span", "state", it.state));
-        if (a && a.href) { var l = el("a", "btn" + (a.quiet ? " quiet" : ""), a.label); l.href = a.href; l.rel = "noreferrer"; side.appendChild(l); }
+        if (a && a.href) { var l = el("a", "btn" + (a.quiet ? " quiet" : ""), a.label); l.href = a.href; l.rel = "noreferrer noopener";
+          if (a.blank) l.target = "_blank"; side.appendChild(l); }
         else if (a) { var b = el("button", "btn" + (a.quiet ? " quiet" : ""), a.label); b.type = "button";
           b.addEventListener("click", function () { a.run(b); }); side.appendChild(b); }
         row.appendChild(side);
@@ -67,6 +68,38 @@
     });
     empty.hidden = any;
   }
+  // Google through the person's own ChatGPT: ChatGPT's official Gmail / Calendar / Drive apps. The
+  // supervisor asks their ChatGPT which are connected; Connect opens ChatGPT's own page for that app
+  // (Google's sign-in, ChatGPT's approved app), and coming back to this tab checks again.
+  var googleVia = null;
+  function applyApps(d) {
+    if (!d || !d.via) return;
+    googleVia = d.via;
+    ITEMS.forEach(function (it) {
+      var info = it.google && d.apps[it.name]; if (!info) return;
+      if (info.connected) {
+        it.group = "Connected"; it.state = "Through your " + d.via;
+        it.action = { label: "Manage", quiet: true, href: info.connect_url, blank: true };
+      } else {
+        it.group = "Available"; it.state = d.checked ? "" : "Could not check";
+        it.action = { label: "Connect", href: info.connect_url, blank: true };
+      }
+    });
+    var note = document.getElementById("gnote");
+    if (note) note.hidden = false;
+    draw();
+  }
+  var lastCheck = 0;
+  function checkApps(fresh) {
+    if (Date.now() - lastCheck < 4000) return; lastCheck = Date.now();
+    ITEMS.forEach(function (it) { if (it.google && it.group === "Available" && googleVia) it.state = "Checking…"; });
+    if (googleVia) draw();
+    fetch("/_eca/apps" + (fresh ? "?fresh=1" : ""), { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; }).then(applyApps).catch(function () {});
+  }
+  window.addEventListener("focus", function () { if (googleVia) checkApps(true); });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && googleVia) checkApps(true); });
   document.getElementById("q").addEventListener("input", function (e) { query = e.target.value.trim().toLowerCase(); draw(); });
   draw();
+  if (aiOn) checkApps(false);
 })();

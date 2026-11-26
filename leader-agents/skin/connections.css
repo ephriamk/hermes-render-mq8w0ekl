@@ -45,3 +45,5 @@ text-decoration:none;border:1px solid transparent;background:var(--text);color:#
 .empty{color:var(--muted);margin:36px 0;text-align:center}
 footer{margin-top:34px;color:var(--faint);font-size:12.5px}
 @media(max-width:520px){.desc{display:none}.item{padding:12px}}
+.gnote { margin: 4px 0 14px; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.45; color: #a9c4b7; background: rgba(16,185,129,.07); border: 1px solid #1a3229; }
+.gnote[hidden] { display: none; }
