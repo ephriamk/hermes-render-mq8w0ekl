@@ -35,6 +35,7 @@
   var SWAPS = [
     [/Claude Subscription DirectSDK \(Experimental\)/g, "Claude"],
     [/claude-subscription-directsdk-experimental:\s*/g, ""],
+    [/(https?:\/\/)?hermes-agent\.nousresearch\.com[^\s"'<>)]*/gi, "my guide"],
     [/HERMES AGENT/g, MARK],
     [/Hermes (Agent|Webapp|Desktop)/g, "ECA Agent"],
     [/\bHermes\b/g, "ECA Agent"]
