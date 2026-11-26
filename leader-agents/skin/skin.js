@@ -37,6 +37,7 @@
     [/claude-subscription-directsdk-experimental:\s*/g, ""],
     [/(https?:\/\/)?hermes-agent\.nousresearch\.com[^\s"'<>)]*/gi, "my guide"],
     [/Waking up default\b/g, "Waking up"],
+    [/@hermes\b/g, "@eca-agent"],
     [/HERMES AGENT/g, MARK],
     [/Hermes (Agent|Webapp|Desktop)/g, "ECA Agent"],
     [/\bHermes\b/g, "ECA Agent"]
@@ -436,7 +437,13 @@
   }
   function brand() { strip(); engineSignIn(); }
   var queued = false;
-  function later() { if (queued) return; queued = true; requestAnimationFrame(function () { queued = false; strip(); declineStats(); engineSignIn(); }); }
+  // Animation frames pause in a background tab, which left its title (and words) as the engine's until
+  // the tab was shown again; a hidden tab uses a plain timer instead.
+  function later() {
+    if (queued) return; queued = true;
+    var run = function () { queued = false; strip(); declineStats(); engineSignIn(); };
+    if (document.hidden) setTimeout(run, 150); else requestAnimationFrame(run);
+  }
   try { new MutationObserver(later).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); } catch (e) {}
   window.addEventListener("hashchange", later);
   // The engine's own "sign in" prompts lead to ECA's Connect page instead of its set-up screens.
