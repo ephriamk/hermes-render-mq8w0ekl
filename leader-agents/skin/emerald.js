@@ -166,12 +166,12 @@ void main(){
   function lookFor(key) {
     return looks[key] || (looks[key] = { ang: 0.6, spin: 0.45, open: 1, mh: 0, mw: 0, mo: 0, mc: 4.6, lx: 0, ly: 0, nextBlink: clock + 1.5, blink: 0 });
   }
-  function draw(o, m, face, size, dt, cut) {
+  function draw(o, m, face, size, dt, cut, aim) {
     gl.uniform4fv(UP, PLANES[cut] || PLANES.emerald);
     var think = m === "thinking", sleep = m === "sleep";
     var breathe = think ? 0.35 + 0.35 * Math.sin(clock * 5.2) : sleep ? 0.04 + 0.04 * Math.sin(clock * 0.8) : 0.10 + 0.08 * Math.sin(clock * 1.4);
     // where it is looking: the pointer, or up and aside while thinking, or nowhere while asleep
-    var gx = think ? 0.75 * Math.sin(clock * 0.9) : sleep ? 0 : tX, gy = think ? 0.8 : sleep ? -0.3 : tY;
+    var gx = think ? 0.75 * Math.sin(clock * 0.9) : sleep ? 0 : aim ? aim[0] : tX, gy = think ? 0.8 : sleep ? -0.3 : aim ? aim[1] : tY;
     o.lx += (gx - o.lx) * Math.min(1, dt * 5); o.ly += (gy - o.ly) * Math.min(1, dt * 5);
     var A, B;
     if (face) {
@@ -220,7 +220,7 @@ void main(){
       });
       Object.keys(groups).forEach(function (key) {
         var g = groups[key], size = Math.max(64, Math.min(640, Math.round(g.want * 1.5)));   // drawn larger, copied down: smooth edges
-        draw(lookFor(key), g.m, g.face, size, dt, g.cut);
+        draw(lookFor(key), g.m, g.face, size, dt, g.cut, aimFrom(g.list[0].cv));
         g.list.forEach(function (it) {
           var w = Math.round(it.cv.clientWidth * dpr);
           if (it.cv.width !== w) { it.cv.width = w; it.cv.height = w; }
@@ -232,8 +232,17 @@ void main(){
   }
   function wake() { if (!raf && items.length) { last = 0; raf = requestAnimationFrame(frame); } }
 
-  // It looks toward the pointer, so it seems to notice you.
+  // It looks toward the pointer, so it seems to notice you: measured from the stone's own centre,
+  // so a stone in a corner looks back across the screen at the pointer, not past it.
+  var pX = null, pY = null;
+  function aimFrom(cv) {
+    if (pX === null) return null;
+    var r = cv.getBoundingClientRect(), reach = Math.max(240, Math.max(window.innerWidth, window.innerHeight) * 0.45);
+    var dx = (pX - (r.left + r.width / 2)) / reach, dy = -(pY - (r.top + r.height / 2)) / reach;
+    return [Math.max(-1, Math.min(1, dx)), Math.max(-1, Math.min(1, dy))];
+  }
   window.addEventListener("pointermove", function (e) {
+    pX = e.clientX; pY = e.clientY;
     tX = (e.clientX / Math.max(1, window.innerWidth) - 0.5) * 2; tY = -(e.clientY / Math.max(1, window.innerHeight) - 0.5) * 2;
     active = Date.now();
   }, { passive: true });
