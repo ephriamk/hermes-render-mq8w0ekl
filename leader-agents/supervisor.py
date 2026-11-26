@@ -573,8 +573,13 @@ try:
     send({"id": 2, "method": "app/installed", "params": {}})
     r = wait(2, 30) or {}
     apps = (r.get("result") or {}).get("apps") or []
-    print(json.dumps({"ok": "result" in r, "apps": sorted({str(a.get("runtimeName") or "") for a in apps
-                                                          if a.get("enabled") and a.get("callable")} - {""})}))
+    send({"id": 3, "method": "account/read", "params": {}})
+    acct = ((wait(3, 15) or {}).get("result") or {})
+    acct = acct.get("account") if isinstance(acct.get("account"), dict) else acct
+    email = str(acct.get("email") or "")[:120] if isinstance(acct, dict) else ""
+    print(json.dumps({"ok": "result" in r, "email": email,
+                      "apps": sorted({str(a.get("runtimeName") or "") for a in apps
+                                      if a.get("enabled") and a.get("callable")} - {""})}))
 finally:
     p.kill()
 """
@@ -600,7 +605,12 @@ def chatgpt_apps(a: dict, fresh: bool = False) -> dict:
         have = set(d.get("apps") or []) if d.get("ok") else None
     except Exception:
         have = None
-    doc = {"via": "ChatGPT", "checked": have is not None,
+    email = ""
+    try:
+        email = str(d.get("email") or "") if have is not None else ""
+    except Exception:
+        pass
+    doc = {"via": "ChatGPT", "checked": have is not None, "account": email,
            "apps": {n: {"connected": bool(have and n in have), "connect_url": u} for n, u in CHATGPT_GOOGLE_APPS.items()}}
     _apps_cache[a["slug"]] = (time.time(), doc)
     return doc

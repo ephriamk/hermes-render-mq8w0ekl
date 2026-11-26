@@ -86,7 +86,12 @@
       }
     });
     var note = document.getElementById("gnote");
-    if (note) note.hidden = false;
+    if (note) {
+      note.textContent = "Google connects through your ChatGPT account. Connect opens ChatGPT in a new tab: " +
+        (d.account ? "check it is signed in as " + d.account + " (the account your agent uses), " : "") +
+        "connect the app with your ECA Google account, then come back here.";
+      note.hidden = false;
+    }
     draw();
   }
   var lastCheck = 0;
