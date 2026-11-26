@@ -184,7 +184,7 @@
     toolLabels();
     thinkingGems();
     companion();
-    if (usage && activeService() !== usageActive) drawUsage();
+    if (usage && activeService() + chatModel() !== usageActive) drawUsage();
     if (document.title !== TITLE) document.title = TITLE;
     if (BLOCKED_ROUTES.test(location.hash)) { location.hash = "#/"; }
     var items = document.querySelectorAll('li[data-slot="sidebar-menu-item"]');
@@ -555,11 +555,24 @@
     var list = (usage && usage.accounts) || [], act = activeService();
     return list.slice().sort(function (x, y) { return (y.service === act) - (x.service === act); });
   }
-  function fullest(acc) { return acc.windows.slice().sort(function (x, y) { return y.used - x.used; })[0]; }
+  // A window named for one model family ("Fable week") only limits chats on that family.
+  var FAMILIES = /\b(fable|opus|sonnet|haiku)\b/i;
+  function chatModel() {
+    var b = document.querySelector('button[data-tour="model-pill"]');
+    return b ? (b.getAttribute("aria-label") || "") + " " + (b.textContent || "") : "";
+  }
+  function applies(w) {
+    var fam = FAMILIES.exec(w.label || "");
+    return !fam || new RegExp("\\b" + fam[1] + "\\b", "i").test(chatModel());
+  }
+  function fullest(acc) {
+    var ws = acc.windows.filter(applies);
+    return (ws.length ? ws : acc.windows).slice().sort(function (x, y) { return y.used - x.used; })[0];
+  }
   function drawUsage() {
     var m = document.querySelector("#eca-chip .eca-meter"); if (!m) return;
-    usageActive = activeService();
-    var acc = usageAccounts()[0], w = acc && acc.service === usageActive ? fullest(acc) : null;
+    usageActive = activeService() + chatModel();
+    var acc = usageAccounts()[0], w = acc && acc.service === activeService() ? fullest(acc) : null;
     if (!w) { m.setAttribute("hidden", ""); return; }
     m.removeAttribute("hidden");
     m.setAttribute("data-tone", usageTone(w.used));
@@ -593,7 +606,9 @@
       u.windows.forEach(function (w) {
         var row = el("div", { "class": "eca-u-row", "data-tone": usageTone(w.used) });
         var top = el("div", { "class": "eca-u-top" });
-        top.appendChild(el("span", null, (w.label || "Limit")));
+        var fam = FAMILIES.exec(w.label || "");
+        top.appendChild(el("span", null, (w.label || "Limit") + (fam ? " (" + fam[1].charAt(0).toUpperCase() + fam[1].slice(1).toLowerCase() + " models only)" : "")));
+        if (fam && !applies(w)) row.classList.add("eca-u-other");
         top.appendChild(el("strong", null, Math.round(w.used) + "% used"));
         row.appendChild(top);
         var bar = el("i", { "class": "eca-u-bar", "aria-hidden": "true" }); var fill = el("b"); fill.style.width = Math.max(2, w.used) + "%";

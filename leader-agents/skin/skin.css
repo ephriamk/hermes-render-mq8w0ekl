@@ -421,3 +421,4 @@ canvas.eca-bot-gem { display: block; flex: none; }
 #eca-usage-pop .eca-u-head { display: flex; align-items: center; gap: 8px; }
 #eca-usage-pop .eca-u-tag { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: #052e1f; background: var(--eca-accent-text); border-radius: 999px; padding: 2px 7px; }
 #eca-usage-pop .eca-u-acct:not(.eca-u-active) { opacity: .78; }
+#eca-usage-pop .eca-u-row.eca-u-other { opacity: .6; }
