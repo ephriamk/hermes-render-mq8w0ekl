@@ -7,7 +7,10 @@
 # v0.23.3 (2026-11-21): fixes the Webapp going blank on Safari and iPhones. Digest checked against
 # Docker Hub (same as `stable`). Previous pin, for a rollback:
 #   v0.23.2@sha256:d6746a084e9341baada483e3d6210444d3c1aeb7c130f0915150065fb2851459
-ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.23.3@sha256:3e9fe4c6ef36490f43aa0d0d80f9df64e9c92a576eee3042f1a97c8813c05355
+# v0.23.4 (2026-11-25): patch roll-up (~229 PRs). Hooks the skin uses, the Webapp routers, page policy,
+# boot steps and the Codex sign-in helpers checked against v0.23.3: unchanged. Rollback pin:
+#   v0.23.3@sha256:3e9fe4c6ef36490f43aa0d0d80f9df64e9c92a576eee3042f1a97c8813c05355
+ARG HERMES_IMAGE=docker.io/nousresearch/hermes-agent:v0.23.4@sha256:ef0650d523ee1b5ab32c779acabc446d9936869a9932591553688a62bcf0c42f
 FROM ${HERMES_IMAGE}
 
 USER root
