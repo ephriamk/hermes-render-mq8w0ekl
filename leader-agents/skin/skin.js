@@ -36,6 +36,7 @@
     [/Claude Subscription DirectSDK \(Experimental\)/g, "Claude"],
     [/claude-subscription-directsdk-experimental:\s*/g, ""],
     [/(https?:\/\/)?hermes-agent\.nousresearch\.com[^\s"'<>)]*/gi, "my guide"],
+    [/Waking up default\b/g, "Waking up"],
     [/HERMES AGENT/g, MARK],
     [/Hermes (Agent|Webapp|Desktop)/g, "ECA Agent"],
     [/\bHermes\b/g, "ECA Agent"]
@@ -161,7 +162,7 @@
   }
   // The sidebar's own words, in ECA's: conversations are "chats". Only the screen's labels are
   // touched (exact matches), never a chat's own title.
-  var RELABEL = { "Sessions": "Chats", "New session": "New chat", "Cron jobs": "Scheduled", "Search sessions...": "Search chats" };
+  var RELABEL = { "Hermes": "ECA Agent", "Sessions": "Chats", "New session": "New chat", "Cron jobs": "Scheduled", "Search sessions...": "Search chats" };
   function relabel() {
     var spots = document.querySelectorAll('[data-slot="pane-tab"][aria-label="Sessions"] span, button[class*="section-label"] span, li[data-slot="sidebar-menu-item"] span, [data-slot="pane-tab"] span');
     for (var i = 0; i < spots.length; i++) {
