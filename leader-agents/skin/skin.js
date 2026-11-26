@@ -146,6 +146,18 @@
       }, 500);
     }
   }
+  // Change the words of an element the engine drew without replacing its text nodes: the engine
+  // keeps a handle on each text node and removes it itself later; a node swapped out from under it
+  // crashes the whole screen ("removeChild ... not a child of this node").
+  function setWords(elm, text) {
+    var first = null;
+    for (var c = elm.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType !== 3) continue;
+      if (!first) { first = c; if (c.nodeValue !== text) c.nodeValue = text; }
+      else if (c.nodeValue) c.nodeValue = "";
+    }
+    if (!first) elm.appendChild(document.createTextNode(text));
+  }
   // The sidebar's own words, in ECA's: conversations are "chats". Only the screen's labels are
   // touched (exact matches), never a chat's own title.
   var RELABEL = { "Sessions": "Chats", "New session": "New chat", "Cron jobs": "Scheduled", "Search sessions...": "Search chats" };
@@ -155,7 +167,7 @@
       var sp = spots[i];
       if (sp.children.length) continue;
       var t = (sp.textContent || "").trim(), to = RELABEL[t] || RELABEL[t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()];
-      if (to && sp.textContent !== to) sp.textContent = to;
+      if (to && sp.textContent !== to) setWords(sp, to);
       if (to === "New chat") { var li = sp.closest('li[data-slot="sidebar-menu-item"]'); if (li && !li.classList.contains("eca-new")) li.classList.add("eca-new"); }
     }
     var inputs = document.querySelectorAll('[data-slot="sidebar"] input[placeholder]');
@@ -187,7 +199,7 @@
         if (node.nodeValue === "HERMES AGENT") { node.nodeValue = MARK; changed = true; }
       }
       var tag = p.nextElementSibling;
-      if (tag && tag.tagName === "P" && tag.textContent !== TAGLINE) tag.textContent = TAGLINE;
+      if (tag && tag.tagName === "P" && tag.textContent !== TAGLINE) setWords(tag, TAGLINE);
       if (changed) { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }
       logo(p);
     }
@@ -297,7 +309,7 @@
         if (!notes[n].children.length && /^(Face follows the name\.?|Pick a stone.*)$/i.test((notes[n].textContent || "").trim())) { anchor = notes[n]; break; }
       }
       if (!anchor) return;
-      anchor.textContent = "Pick a stone, or leave both on Auto and the name decides.";
+      setWords(anchor, "Pick a stone, or leave both on Auto and the name decides.");
       box = el("div", { id: "eca-gem-pick" });
       var rowC = el("div", { "class": "eca-pick-row", "data-kind": "c" }), rowK = el("div", { "class": "eca-pick-row", "data-kind": "k" });
       rowC.appendChild(el("span", { "class": "eca-pick-label" }, "Colour"));
